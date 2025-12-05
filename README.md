@@ -1,6 +1,6 @@
 # Starry OS
 
-*An experimental monolithic OS based on ArceOS*
+_An experimental monolithic OS based on ArceOS_
 
 [![GitHub Stars](https://img.shields.io/github/stars/Starry-OS/StarryOS?style=for-the-badge)](https://github.com/Starry-OS/StarryOS/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/Starry-OS/StarryOS?style=for-the-badge)](https://github.com/Starry-OS/StarryOS/network)
@@ -71,12 +71,46 @@ $ sudo apt install -y build-essential cmake clang qemu-system
 
 ##### ii. Install Musl Toolchain
 
+有两种方式安装 Musl 工具链：
+
+**方式 A: 使用预编译工具链 (推荐)**
+
 1. Download files from https://github.com/arceos-org/setup-musl/releases/tag/prebuilt
 2. Extract to some path, for example `/opt/riscv64-linux-musl-cross`
 3. Add bin folder to `PATH`, for example:
    ```bash
    $ export PATH=/opt/riscv64-linux-musl-cross/bin:$PATH
    ```
+
+**方式 B: 从源码构建 (支持 LoongArch64 和 macOS)**
+
+使用集成的 musl-cross-make 从源码构建工具链，支持 riscv64、loongarch64、aarch64、x86_64 四个架构：
+
+```bash
+# 构建所有架构的工具链
+make musl-toolchain
+
+# 或使用脚本
+bash scripts/build-musl-toolchain.sh
+
+# 只构建特定架构
+bash scripts/build-musl-toolchain.sh --arch "riscv64 loongarch64"
+
+# macOS 用户可以先检查依赖
+bash scripts/check-deps-macos.sh
+```
+
+构建完成后，使用以下命令设置环境：
+
+```bash
+# 设置工具链路径
+source musl-toolchains/setup-env.sh riscv64
+
+# 或手动设置
+export PATH="$PWD/musl-toolchains/riscv64-linux-musl/bin:$PATH"
+```
+
+更多详细信息请参考 [Musl 工具链构建指南](docs/musl-toolchain-build.md)。
 
 ##### iii. Setup Rust toolchain
 
@@ -115,6 +149,7 @@ $ make ARCH=loongarch64 run
 ```
 
 Note:
+
 1. Binary dependencies will be automatically built during `make build`.
 2. You don't have to rerun `build` every time. `run` automatically rebuilds if necessary.
 3. The disk file will **not** be reset between each run. As a result, if you want to switch to another architecture, you must run `make rootfs` with the new architecture before `make run`.
