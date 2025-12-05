@@ -14,3 +14,7 @@
 *.swp
 *.swo
 
+# musl 工具链构建产物
+/musl-cross-make/
+/musl-toolchains/
+

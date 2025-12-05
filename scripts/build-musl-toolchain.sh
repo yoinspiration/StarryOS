@@ -55,6 +55,7 @@ check_dependencies() {
     info "检查依赖..."
     
     local missing_deps=()
+    local missing_pkgs=()
     
     # 检查基本工具
     for cmd in git make gcc; do
@@ -70,8 +71,42 @@ check_dependencies() {
         fi
     fi
     
+    # 检查系统库依赖（Linux）
+    if [ "$OS" = "linux" ]; then
+        # 检查 zlib 开发库（GCC 构建需要）
+        if ! pkg-config --exists zlib 2>/dev/null && [ ! -f /usr/include/zlib.h ] && [ ! -f /usr/local/include/zlib.h ]; then
+            missing_pkgs+=("zlib1g-dev")
+        fi
+        
+        # 检查其他常见构建依赖
+        if ! command -v bison &> /dev/null; then
+            missing_pkgs+=("bison")
+        fi
+        
+        if ! command -v flex &> /dev/null; then
+            missing_pkgs+=("flex")
+        fi
+        
+        # texinfo 包提供 makeinfo 命令，而不是 texinfo 命令
+        if ! command -v makeinfo &> /dev/null; then
+            missing_pkgs+=("texinfo")
+        fi
+    fi
+    
+    # macOS 特定库依赖
+    if [ "$OS" = "macos" ]; then
+        # 检查 zlib（macOS 通常自带，但需要确认）
+        if ! pkg-config --exists zlib 2>/dev/null && [ ! -f /usr/include/zlib.h ] && [ ! -f /opt/homebrew/include/zlib.h ] && [ ! -f /usr/local/include/zlib.h ]; then
+            missing_pkgs+=("zlib (通过 Homebrew: brew install zlib)")
+        fi
+    fi
+    
     if [ ${#missing_deps[@]} -ne 0 ]; then
-        error "缺少以下依赖: ${missing_deps[*]}"
+        error "缺少以下命令: ${missing_deps[*]}"
+    fi
+    
+    if [ ${#missing_pkgs[@]} -ne 0 ]; then
+        error "缺少以下系统包:\n  ${missing_pkgs[*]}\n\n请安装它们:\n  Ubuntu/Debian: sudo apt-get install ${missing_pkgs[*]}\n  Fedora/RHEL: sudo dnf install ${missing_pkgs[*]//zlib1g-dev/zlib-devel}\n  macOS: brew install ${missing_pkgs[*]//zlib1g-dev/zlib}"
     fi
     
     info "依赖检查完成"
@@ -80,13 +115,32 @@ check_dependencies() {
 # 克隆或更新仓库
 setup_repo() {
     if [ -d "$MUSL_CROSS_MAKE_DIR" ]; then
-        info "musl-cross-make 目录已存在，更新中..."
+        info "musl-cross-make 目录已存在，尝试更新..."
         cd "$MUSL_CROSS_MAKE_DIR"
-        git fetch origin
-        git reset --hard origin/master || git reset --hard origin/main
+        
+        # 检查是否是有效的 git 仓库
+        if [ -d ".git" ]; then
+            # 尝试更新，如果失败则使用本地版本
+            if git fetch origin 2>/dev/null; then
+                git reset --hard origin/master 2>/dev/null || git reset --hard origin/main 2>/dev/null
+                info "仓库更新成功"
+            else
+                warn "无法连接到 GitHub，使用本地已有仓库继续构建"
+                warn "如果构建失败，请检查网络连接后重试"
+            fi
+        else
+            warn "目录存在但不是有效的 git 仓库，跳过更新"
+        fi
     else
         info "克隆 musl-cross-make 仓库..."
-        git clone "$MUSL_CROSS_MAKE_REPO" "$MUSL_CROSS_MAKE_DIR"
+        if ! git clone "$MUSL_CROSS_MAKE_REPO" "$MUSL_CROSS_MAKE_DIR" 2>/dev/null; then
+            error "无法克隆仓库，请检查网络连接。\n可以使用以下镜像：\n  - Gitee: https://gitee.com/mirrors/musl-cross-make.git\n  - 或者手动下载并解压到 $MUSL_CROSS_MAKE_DIR"
+        fi
+    fi
+    
+    # 验证仓库是否可用
+    if [ ! -f "$MUSL_CROSS_MAKE_DIR/Makefile" ]; then
+        error "musl-cross-make Makefile 不存在，请检查仓库是否正确克隆"
     fi
 }
 
@@ -153,11 +207,11 @@ GCC_CONFIG += --disable-libstdc++-v3
 GCC_CONFIG += --enable-default-pie
 GCC_CONFIG += --enable-tls
 GCC_CONFIG += --enable-threads=posix
+# 注意：RISC-V 会在特定配置中覆盖共享库设置
 GCC_CONFIG += --enable-shared
 GCC_CONFIG += --enable-static
 GCC_CONFIG += --with-system-zlib
 GCC_CONFIG += --enable-__cxa_atexit
-GCC_CONFIG += --disable-libgcc
 GCC_CONFIG += --disable-multilib
 GCC_CONFIG += --with-gnu-as
 GCC_CONFIG += --with-gnu-ld
@@ -167,13 +221,31 @@ MUSL_CONFIG += --enable-debug
 MUSL_CONFIG += --enable-optimize
 EOF
 
+    # RISC-V 特定配置
+    # 禁用共享库构建以避免 RISC-V libgcc 的 PIC 重定位问题
+    # 对于 musl 工具链，静态链接通常是主要使用方式
+    if [ "$arch" = "riscv64" ]; then
+        cat >> "$config_file" <<EOF
+
+# RISC-V 特定配置
+# 禁用共享库以避免 RISC-V libgcc 的 PIC 重定位问题
+# 注意：这会禁用所有共享库，包括 musl，但对于静态链接工具链这是可以接受的
+GCC_CONFIG += --disable-shared
+GCC_CONFIG += --enable-static
+EOF
+    fi
+    
     # LoongArch64 特定配置
     # 参考: https://github.com/lyw19b/musl-cross-make/blob/master/README.LoongArch.md
+    # LoongArch64 需要 GCC 13.2.0 或更高版本，以及 Linux 6.7 或更高版本
     if [ "$arch" = "loongarch64" ]; then
         cat >> "$config_file" <<EOF
 
 # LoongArch64 特定配置
 # 基于 musl-cross-make 的 LoongArch64 支持
+# LoongArch64 需要 GCC 13.2.0+ 和 Linux 6.7+
+GCC_VER = 13.2.0
+LINUX_VER = 6.7
 GCC_CONFIG += --with-arch=loongarch64
 GCC_CONFIG += --with-abi=lp64d
 EOF
@@ -228,10 +300,18 @@ build_arch() {
         MAKE_CMD="make"
     fi
     
-    # 执行构建
-    if ! $MAKE_CMD -j"$PARALLEL_JOBS"; then
-        error "构建 $arch 工具链失败，请检查错误信息"
+    # 执行构建，捕获输出以便在失败时显示
+    local build_log=$(mktemp)
+    if ! $MAKE_CMD -j"$PARALLEL_JOBS" 2>&1 | tee "$build_log"; then
+        warn "构建失败，显示最后的错误信息："
+        echo ""
+        # 显示日志中最后的错误相关行
+        tail -n 50 "$build_log" | grep -i -A 5 -B 5 "error\|failed\|fatal" || tail -n 30 "$build_log"
+        echo ""
+        rm -f "$build_log"
+        error "构建 $arch 工具链失败，请检查上面的错误信息"
     fi
+    rm -f "$build_log"
     
     info "$arch 工具链构建完成"
 }
