@@ -82,9 +82,17 @@ $ sudo apt install -y build-essential cmake clang qemu-system
    $ export PATH=/opt/riscv64-linux-musl-cross/bin:$PATH
    ```
 
-**方式 B: 从源码构建 (支持 LoongArch64 和 macOS)**
+**方式 B: 从源码构建 (支持 LoongArch64、macOS 和 Linux)**
 
-使用集成的 musl-cross-make 从源码构建工具链，支持 riscv64、loongarch64、aarch64、x86_64 四个架构：
+使用集成的 musl-cross-make 从源码构建工具链，支持 riscv64、loongarch64、aarch64、x86_64 四个架构。
+
+该构建系统基于 [lyw19b/musl-cross-make](https://github.com/lyw19b/musl-cross-make.git)，提供了对 LoongArch64 的完整支持。详细说明请参考 [README.LoongArch.md](https://github.com/lyw19b/musl-cross-make/blob/master/README.LoongArch.md)。
+
+**注意**:
+
+- ✅ **Linux**: 完全支持
+- ✅ **macOS**: 完全支持（包括 Apple Silicon 和 Intel）
+- ⚠️ **Windows**: 需要通过 WSL (Windows Subsystem for Linux) 使用，Windows 原生环境不支持
 
 ```bash
 # 构建所有架构的工具链

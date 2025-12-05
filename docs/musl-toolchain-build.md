@@ -15,6 +15,38 @@ sudo apt update
 sudo apt install -y build-essential git make gcc g++ wget
 ```
 
+### Windows
+
+Windows 上不能直接运行 bash 脚本，需要通过以下方式之一：
+
+**方式 1: 使用 WSL (Windows Subsystem for Linux) - 推荐**
+
+1. 安装 WSL2:
+
+   ```powershell
+   # 在 PowerShell (管理员权限) 中运行
+   wsl --install
+   ```
+
+2. 在 WSL 中按照 Linux 的步骤操作:
+
+   ```bash
+   # 在 WSL 终端中
+   sudo apt update
+   sudo apt install -y build-essential git make gcc g++ wget
+   ```
+
+3. 在 WSL 中构建工具链:
+   ```bash
+   bash scripts/build-musl-toolchain.sh
+   ```
+
+**方式 2: 使用 Git Bash 或 MSYS2**
+
+理论上可以使用 Git Bash 或 MSYS2，但需要确保所有依赖（make、gcc 等）都已正确安装。推荐使用 WSL。
+
+**注意**: Windows 原生环境不支持，因为 musl-cross-make 需要 Unix 环境。
+
 ### macOS
 
 1. 安装 Homebrew (如果尚未安装):
@@ -171,12 +203,16 @@ LoongArch64 工具链需要特殊的配置。构建脚本会自动应用以下�
 - `--with-arch=loongarch64`
 - `--with-abi=lp64d`
 
+这些配置基于 [musl-cross-make 的 LoongArch64 支持](https://github.com/lyw19b/musl-cross-make/blob/master/README.LoongArch.md)。该仓库专门为 LoongArch64 架构提供了完整的交叉编译工具链支持。
+
 ### macOS 交叉编译
 
-在 macOS 上构建 Linux 工具链时，构建脚本会自动设置:
+在 macOS 上构建 Linux 工具链时，构建脚本会自动检测系统架构并设置相应的构建配置:
 
-- `--build=x86_64-apple-darwin`
-- `--host=x86_64-apple-darwin`
+- **Apple Silicon (arm64)**: `--build=aarch64-apple-darwin --host=aarch64-apple-darwin`
+- **Intel (x86_64)**: `--build=x86_64-apple-darwin --host=x86_64-apple-darwin`
+
+这确保了在 macOS 上可以成功编译出所有四个架构的 musl 工具链，包括 LoongArch64。
 
 ## 清理
 
@@ -228,9 +264,22 @@ bash scripts/build-musl-toolchain.sh --jobs 2
 
 ## 参考资源
 
-- [musl-cross-make 仓库](https://github.com/lyw19b/musl-cross-make)
-- [LoongArch64 README](https://github.com/lyw19b/musl-cross-make/blob/master/README.LoongArch.md)
-- [musl libc 官网](https://musl.libc.org/)
+- [musl-cross-make 仓库](https://github.com/lyw19b/musl-cross-make) - 支持 LoongArch64 的 musl 交叉编译工具链构建系统
+- [LoongArch64 README](https://github.com/lyw19b/musl-cross-make/blob/master/README.LoongArch.md) - LoongArch64 架构的详细构建说明
+- [musl libc 官网](https://musl.libc.org/) - musl C 标准库官方文档
+
+### LoongArch64 支持说明
+
+本项目使用的 musl-cross-make 仓库 (https://github.com/lyw19b/musl-cross-make.git) 提供了对 LoongArch64 架构的完整支持。该仓库基于标准的 musl-cross-make，并添加了 LoongArch64 的交叉编译支持。
+
+理论上，可以在该仓库的基础上编译出四个架构的 musl 工具链：
+
+- **riscv64-linux-musl**
+- **loongarch64-linux-musl**
+- **aarch64-linux-musl**
+- **x86_64-linux-musl**
+
+在 macOS 上，构建脚本会自动检测系统架构并设置相应的构建配置，确保可以成功编译出所有四个架构的工具链。
 
 ## 贡献
 

@@ -2,6 +2,7 @@
 # 构建 musl 交叉编译工具链脚本
 # 支持 riscv64, loongarch64, aarch64, x86_64 四个架构
 # 基于 https://github.com/lyw19b/musl-cross-make.git
+# LoongArch64 支持参考: https://github.com/lyw19b/musl-cross-make/blob/master/README.LoongArch.md
 
 set -e
 
@@ -167,10 +168,12 @@ MUSL_CONFIG += --enable-optimize
 EOF
 
     # LoongArch64 特定配置
+    # 参考: https://github.com/lyw19b/musl-cross-make/blob/master/README.LoongArch.md
     if [ "$arch" = "loongarch64" ]; then
         cat >> "$config_file" <<EOF
 
 # LoongArch64 特定配置
+# 基于 musl-cross-make 的 LoongArch64 支持
 GCC_CONFIG += --with-arch=loongarch64
 GCC_CONFIG += --with-abi=lp64d
 EOF
