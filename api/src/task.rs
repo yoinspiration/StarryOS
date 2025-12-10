@@ -75,8 +75,19 @@ pub fn new_user_task(
                             ExceptionKind::IllegalInstruction => Signo::SIGILL,
                             _ => Signo::SIGTRAP,
                         };
-                        raise_signal_fatal(SignalInfo::new_kernel(signo))
-                            .expect("Failed to send SIGTRAP");
+                        // For exceptions, send signal normally instead of fatal
+                        // This allows signal handlers to process the signal if registered,
+                        // and follows the normal signal delivery mechanism.
+                        // The signal will be processed by check_signals() which will
+                        // determine the appropriate action (terminate, core dump, handler, etc.)
+                        let sig = SignalInfo::new_kernel(signo);
+                        debug!("Exception {:?} -> signal {:?} at ip={:#x}", exc_info.kind(), signo, uctx.ip());
+                        if thr.signal.send_signal(sig) {
+                            curr.interrupt();
+                        }
+                        // Note: Even if send_signal returns false (signal blocked),
+                        // the signal is queued and will be processed when unblocked.
+                        // We don't need to fall back to fatal signal here.
                     }
                     r => {
                         warn!("Unexpected return reason: {r:?}");
