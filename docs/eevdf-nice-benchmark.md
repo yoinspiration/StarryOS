@@ -113,5 +113,9 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
   - Only `PRIO_PROCESS` is supported.
   - Only current process update is supported (`who == 0` or current pid).
   - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
+- `getpriority` remains partially implemented for compatibility:
+  - `PRIO_PROCESS` currently returns a fixed placeholder value after target existence validation.
+  - `PRIO_PGRP`/`PRIO_USER` are not yet semantically aligned with the minimal `setpriority` boundary.
+  - A future update should return effective nice values and unify scope handling.
 - This benchmark is single-machine and short-run (`N=50`); larger samples and additional workloads
   are recommended for publication-grade claims.

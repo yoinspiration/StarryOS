@@ -166,12 +166,20 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
 
     match which {
         PRIO_PROCESS => {
+            // Keep behavior consistent with current setpriority boundary:
+            // - target scope is accepted as PRIO_PROCESS
+            // - if `who != 0`, we only validate target existence now
+            // - return value is still a fixed placeholder until per-task nice
+            //   state is fully wired through scheduler/task metadata.
+            // TODO: return effective nice of target process.
             if who != 0 {
                 let _proc = get_process_data(who)?;
             }
             Ok(20)
         }
         PRIO_PGRP => {
+            // TODO: align semantics with sys_setpriority by rejecting unsupported
+            // scopes, or implement real process-group priority querying.
             if who != 0 {
                 let _pg = get_process_group(who)?;
             }
@@ -191,6 +199,10 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
 pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
     debug!("sys_setpriority <= which: {which}, who: {who}, prio: {prio}");
 
+    // Current semantic boundary (intentionally minimal):
+    // - only supports PRIO_PROCESS
+    // - only allows changing current process (`who == 0` or current pid)
+    // Other scopes / targets return OperationNotPermitted for now.
     if !(-20..=19).contains(&prio) {
         return Err(AxError::InvalidInput);
     }
