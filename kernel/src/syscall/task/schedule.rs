@@ -15,6 +15,28 @@ use crate::{
     time::TimeValueLike,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SetPriorityTarget {
+    CurrentProcess,
+    UnsupportedProcess,
+    UnsupportedScope,
+    InvalidScope,
+}
+
+fn classify_setpriority_target(which: u32, who: u32, curr_pid: u32) -> SetPriorityTarget {
+    match which {
+        PRIO_PROCESS => {
+            if who == 0 || who == curr_pid {
+                SetPriorityTarget::CurrentProcess
+            } else {
+                SetPriorityTarget::UnsupportedProcess
+            }
+        }
+        PRIO_PGRP | PRIO_USER => SetPriorityTarget::UnsupportedScope,
+        _ => SetPriorityTarget::InvalidScope,
+    }
+}
+
 pub fn sys_sched_yield() -> AxResult<isize> {
     axtask::yield_now();
     Ok(0)
@@ -173,23 +195,64 @@ pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
         return Err(AxError::InvalidInput);
     }
 
-    match which {
-        PRIO_PROCESS => {
+    let curr_pid = current().as_thread().proc_data.proc.pid() as u32;
+    match classify_setpriority_target(which, who, curr_pid) {
+        SetPriorityTarget::CurrentProcess => {
             // Minimal support: allow changing the current process only.
             // On Linux, `nice` may pass `who = 0` or `who = getpid()`.
-            let curr_pid = current().as_thread().proc_data.proc.pid() as u32;
-            if who != 0 && who != curr_pid {
-                // We don't support changing other processes yet.
-                let _proc = get_process_data(who)?;
-                return Err(AxError::OperationNotPermitted);
-            }
             if axtask::set_priority(prio as isize) {
                 Ok(0)
             } else {
                 Err(AxError::InvalidInput)
             }
         }
-        PRIO_PGRP | PRIO_USER => Err(AxError::OperationNotPermitted),
-        _ => Err(AxError::InvalidInput),
+        SetPriorityTarget::UnsupportedProcess => {
+            // We don't support changing other processes yet.
+            let _proc = get_process_data(who)?;
+            Err(AxError::OperationNotPermitted)
+        }
+        SetPriorityTarget::UnsupportedScope => Err(AxError::OperationNotPermitted),
+        SetPriorityTarget::InvalidScope => Err(AxError::InvalidInput),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_accepts_current_process_by_zero_or_pid() {
+        assert_eq!(
+            classify_setpriority_target(PRIO_PROCESS, 0, 123),
+            SetPriorityTarget::CurrentProcess
+        );
+        assert_eq!(
+            classify_setpriority_target(PRIO_PROCESS, 123, 123),
+            SetPriorityTarget::CurrentProcess
+        );
+    }
+
+    #[test]
+    fn classify_rejects_other_process() {
+        assert_eq!(
+            classify_setpriority_target(PRIO_PROCESS, 456, 123),
+            SetPriorityTarget::UnsupportedProcess
+        );
+    }
+
+    #[test]
+    fn classify_rejects_unsupported_scope_and_invalid_scope() {
+        assert_eq!(
+            classify_setpriority_target(PRIO_PGRP, 0, 123),
+            SetPriorityTarget::UnsupportedScope
+        );
+        assert_eq!(
+            classify_setpriority_target(PRIO_USER, 0, 123),
+            SetPriorityTarget::UnsupportedScope
+        );
+        assert_eq!(
+            classify_setpriority_target(999999, 0, 123),
+            SetPriorityTarget::InvalidScope
+        );
     }
 }
