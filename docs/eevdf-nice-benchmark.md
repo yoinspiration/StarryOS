@@ -48,6 +48,16 @@ sort -n /root/ls_nice19.txt | awk '{a[++n]=$1} END{printf("nice19 N=%d p50=%.3f 
 - `base N=50 p50=0.640 p95=0.840 p99=0.850 max=0.850`
 - `nice19 N=50 p50=0.050 p95=0.060 p99=0.070 max=0.080`
 
+## Stability Stress Results (N=200, `ls`)
+
+| Scenario | N | p50 | p95 | p99 | max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| base | 200 | 0.630 | 0.640 | 0.640 | 0.640 |
+| nice19 | 200 | 0.050 | 0.060 | 0.060 | 0.070 |
+
+Compared with `base`, the `nice19` run keeps a clear latency advantage at tail metrics
+(`p95/p99/max`), and no regression is observed in this stress sample.
+
 ## Scheduler Stats Observability
 
 The EEVDF-class scheduler exports class-level stats through `info` logs:
@@ -102,6 +112,28 @@ With class weights `interactive:normal:background = 8:4:1`, the theoretical spli
 The measured values closely match the expected ratio, which validates that class-level accounting
 and weighted dispatch behavior are working as intended.
 
+## PRIO_PROCESS (non-current pid) Validation
+
+A functional validation was run for `setpriority/getpriority` behavior on non-current processes:
+
+1. Spawn two background processes and capture pids (`pid1`, `pid2`)
+2. Apply `renice -n 19 $pid1` and `renice -n -10 $pid2` (non-current targets)
+3. Validate error handling with:
+   - invalid nice value: `renice -n 40 $pidx`
+   - non-existing process: `renice -n 5 999999`
+
+Observed results:
+
+- Non-current target updates succeeded for valid values.
+- Invalid priority was rejected with `setpriority: Invalid argument`.
+- Missing target was rejected with `getpriority: No such process`.
+- Follow-up valid update (`renice -n 5 $pidx`) succeeded.
+
+Conclusion:
+
+- Minimal `PRIO_PROCESS` support for specified pid is functional.
+- Basic error-path semantics for invalid input and missing process are preserved.
+
 ## Conclusion
 
 `nice` is effective with the current EEVDF-class integration. Lowering background task priority
@@ -111,10 +143,11 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
 
 - `setpriority` support is intentionally minimal:
   - Only `PRIO_PROCESS` is supported.
-  - Only current process update is supported (`who == 0` or current pid).
+  - `PRIO_PROCESS` supports current process (`who == 0`) and specified process (`who == pid`).
+  - `PRIO_PROCESS` currently applies one process-wide nice to all its threads.
   - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
 - `getpriority` remains partially implemented for compatibility:
-  - `PRIO_PROCESS` currently returns a fixed placeholder value after target existence validation.
+  - `PRIO_PROCESS` now returns the stored process nice (using this kernel path's return encoding).
   - `PRIO_PGRP`/`PRIO_USER` are not yet semantically aligned with the minimal `setpriority` boundary.
   - A future update should return effective nice values and unify scope handling.
 - This benchmark is single-machine and short-run (`N=50`); larger samples and additional workloads

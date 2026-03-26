@@ -179,6 +179,30 @@ pub(crate) fn select_run_queue<G: BaseGuard>(task: &AxTaskRef) -> AxRunQueueRef<
     }
 }
 
+/// Select the owning run queue for a specific task.
+#[inline]
+pub(crate) fn run_queue_for_task<G: BaseGuard>(task: &AxTaskRef) -> AxRunQueueRef<'static, G> {
+    let irq_state = G::acquire();
+    #[cfg(not(feature = "smp"))]
+    {
+        let _ = task;
+        AxRunQueueRef {
+            inner: unsafe { RUN_QUEUE.current_ref_mut_raw() },
+            state: irq_state,
+            _phantom: core::marker::PhantomData,
+        }
+    }
+    #[cfg(feature = "smp")]
+    {
+        let cpu_id = task.cpu_id() as usize;
+        AxRunQueueRef {
+            inner: get_run_queue(cpu_id),
+            state: irq_state,
+            _phantom: core::marker::PhantomData,
+        }
+    }
+}
+
 /// [`AxRunQueue`] represents a run queue for global system or a specific CPU.
 pub(crate) struct AxRunQueue {
     /// The ID of the CPU this run queue is associated with.
@@ -266,6 +290,10 @@ impl<G: BaseGuard> AxRunQueueRef<'_, G> {
                 crate::current().set_preempt_pending(true);
             }
         }
+    }
+
+    pub fn set_task_priority(&mut self, task: &AxTaskRef, prio: isize) -> bool {
+        self.inner.scheduler.lock().set_priority(task, prio)
     }
 }
 

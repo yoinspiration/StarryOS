@@ -11,7 +11,7 @@ use linux_raw_sys::general::{
 use starry_vm::{VmMutPtr, VmPtr, vm_load, vm_write_slice};
 
 use crate::{
-    task::{get_process_data, get_process_group, AsThread},
+    task::{get_process_data, get_process_group, tasks, AsThread},
     time::TimeValueLike,
 };
 
@@ -35,6 +35,23 @@ fn classify_setpriority_target(which: u32, who: u32, curr_pid: u32) -> SetPriori
         PRIO_PGRP | PRIO_USER => SetPriorityTarget::UnsupportedScope,
         _ => SetPriorityTarget::InvalidScope,
     }
+}
+
+fn apply_nice_to_process(pid: u32, prio: i32) -> AxResult<bool> {
+    let mut applied = false;
+    for task in tasks() {
+        let Some(thr) = task.try_as_thread() else {
+            continue;
+        };
+        if thr.proc_data.proc.pid() as u32 != pid {
+            continue;
+        }
+        if !axtask::set_priority_for_task(&task, prio as isize) {
+            return Ok(false);
+        }
+        applied = true;
+    }
+    Ok(applied)
 }
 
 pub fn sys_sched_yield() -> AxResult<isize> {
@@ -166,16 +183,10 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
 
     match which {
         PRIO_PROCESS => {
-            // Keep behavior consistent with current setpriority boundary:
-            // - target scope is accepted as PRIO_PROCESS
-            // - if `who != 0`, we only validate target existence now
-            // - return value is still a fixed placeholder until per-task nice
-            //   state is fully wired through scheduler/task metadata.
-            // TODO: return effective nice of target process.
-            if who != 0 {
-                let _proc = get_process_data(who)?;
-            }
-            Ok(20)
+            let proc_data = get_process_data(who)?;
+            // Keep Linux-compatible return encoding used by this kernel path.
+            // Nice range [-20, 19] maps to [40, 1].
+            Ok((20 - proc_data.nice()) as isize)
         }
         PRIO_PGRP => {
             // TODO: align semantics with sys_setpriority by rejecting unsupported
@@ -199,10 +210,10 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
 pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
     debug!("sys_setpriority <= which: {which}, who: {who}, prio: {prio}");
 
-    // Current semantic boundary (intentionally minimal):
+    // Current semantic boundary:
     // - only supports PRIO_PROCESS
-    // - only allows changing current process (`who == 0` or current pid)
-    // Other scopes / targets return OperationNotPermitted for now.
+    // - supports current or specified process by pid
+    // Other scopes return OperationNotPermitted for now.
     if !(-20..=19).contains(&prio) {
         return Err(AxError::InvalidInput);
     }
@@ -210,18 +221,26 @@ pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
     let curr_pid = current().as_thread().proc_data.proc.pid() as u32;
     match classify_setpriority_target(which, who, curr_pid) {
         SetPriorityTarget::CurrentProcess => {
-            // Minimal support: allow changing the current process only.
             // On Linux, `nice` may pass `who = 0` or `who = getpid()`.
-            if axtask::set_priority(prio as isize) {
+            let curr_task = current();
+            let curr = curr_task.as_thread();
+            let pid = curr.proc_data.proc.pid() as u32;
+            curr.proc_data.set_nice(prio);
+            if apply_nice_to_process(pid, prio)? {
                 Ok(0)
             } else {
                 Err(AxError::InvalidInput)
             }
         }
         SetPriorityTarget::UnsupportedProcess => {
-            // We don't support changing other processes yet.
-            let _proc = get_process_data(who)?;
-            Err(AxError::OperationNotPermitted)
+            // Minimal support for PRIO_PROCESS + specified pid.
+            let proc_data = get_process_data(who)?;
+            proc_data.set_nice(prio);
+            if apply_nice_to_process(who, prio)? {
+                Ok(0)
+            } else {
+                Err(AxError::InvalidInput)
+            }
         }
         SetPriorityTarget::UnsupportedScope => Err(AxError::OperationNotPermitted),
         SetPriorityTarget::InvalidScope => Err(AxError::InvalidInput),

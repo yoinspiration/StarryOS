@@ -178,6 +178,11 @@ pub fn set_priority(prio: isize) -> bool {
     current_run_queue::<NoPreemptIrqSave>().set_current_priority(prio)
 }
 
+/// Set priority for a specific task.
+pub fn set_priority_for_task(task: &AxTaskRef, prio: isize) -> bool {
+    crate::run_queue::run_queue_for_task::<NoPreemptIrqSave>(task).set_task_priority(task, prio)
+}
+
 /// Set the affinity for the current task.
 /// [`AxCpuMask`] is used to specify the CPU affinity.
 /// Returns `true` if the affinity is set successfully.
