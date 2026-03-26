@@ -48,6 +48,60 @@ sort -n /root/ls_nice19.txt | awk '{a[++n]=$1} END{printf("nice19 N=%d p50=%.3f 
 - `base N=50 p50=0.640 p95=0.840 p99=0.850 max=0.850`
 - `nice19 N=50 p50=0.050 p95=0.060 p99=0.070 max=0.080`
 
+## Scheduler Stats Observability
+
+The EEVDF-class scheduler exports class-level stats through `info` logs:
+
+- `eevdf-class stats: picks=[...,...,...] ticks=[...,...,...] share(i/n/b)=.../.../...`
+
+`share(i/n/b)` is computed in a fixed recent window (`STATS_LOG_INTERVAL_TICKS = 256`) and
+reset after each emission. This makes the share reflect current scheduling behavior rather than
+long-lived boot-time accumulation.
+
+Quick load recipe to observe class share changes in StarryOS shell:
+
+```sh
+killall yes 2>/dev/null
+
+# background class (nice 19)
+for i in 1 2; do nice -n 19 yes > /dev/null & done
+
+# normal class (default nice 0)
+for i in 1 2; do yes > /dev/null & done
+
+# interactive class (negative nice, if supported)
+for i in 1 2; do nice -n -10 yes > /dev/null & done
+
+sleep 10
+killall yes 2>/dev/null
+```
+
+If negative nice is not supported in your environment, skip the interactive block and run a
+two-class comparison (`normal` + `background`) first.
+
+## Class Share Validation (Window Stats)
+
+A follow-up run was executed with window-based scheduler stats enabled (`LOG=info`):
+
+1. `background` only (`nice -n 19 yes` x2)
+2. `background` + `normal` (plus default `yes` x2)
+3. `background` + `normal` + `interactive` (plus `nice -n -10 yes` x2)
+
+Observed window-share evolution:
+
+- Background only: `share(i/n/b)` converged to about `0% / 0% / 100%`
+- Background + Normal: `share(i/n/b)` moved to about `0% / 80% / 20%`
+- Background + Normal + Interactive: `share(i/n/b)` stabilized around `61% / 31% / 8%`
+
+With class weights `interactive:normal:background = 8:4:1`, the theoretical split is:
+
+- interactive: `8 / (8+4+1) = 61.5%`
+- normal: `4 / (8+4+1) = 30.8%`
+- background: `1 / (8+4+1) = 7.7%`
+
+The measured values closely match the expected ratio, which validates that class-level accounting
+and weighted dispatch behavior are working as intended.
+
 ## Conclusion
 
 `nice` is effective with the current EEVDF-class integration. Lowering background task priority

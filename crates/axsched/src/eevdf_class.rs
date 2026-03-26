@@ -3,6 +3,7 @@ use core::ops::Deref;
 use core::sync::atomic::{AtomicIsize, AtomicU8, Ordering};
 
 use linked_list_r4l::{GetLinks, Links, List};
+use log::info;
 
 use crate::BaseScheduler;
 
@@ -14,10 +15,18 @@ const DEFAULT_WEIGHTS: [u64; NUM_CLASSES] = [8, 4, 1];
 const SCHED_PERIOD_TICKS: u128 = 15;
 /// Minimum timeslice for a class in ticks.
 const MIN_SLICE_TICKS: u128 = 2;
+/// Emit one scheduler stats log every N charged ticks.
+const STATS_LOG_INTERVAL_TICKS: u64 = 256;
 
 pub const CLASS_INTERACTIVE: u8 = 0;
 pub const CLASS_NORMAL: u8 = 1;
 pub const CLASS_BACKGROUND: u8 = 2;
+
+#[derive(Debug, Clone, Copy)]
+pub struct EevdfClassStats {
+    pub pick_count: [u64; NUM_CLASSES],
+    pub charged_ticks: [u64; NUM_CLASSES],
+}
 
 fn nice_to_class(nice: isize) -> u8 {
     if nice < 0 {
@@ -118,6 +127,12 @@ pub struct EevdfClassScheduler<T, const MAX_TIME_SLICE: usize> {
     classes: [ClassQueue<T, MAX_TIME_SLICE>; NUM_CLASSES],
     min_vruntime: u128,
     current_class: Option<usize>,
+    pick_count: [u64; NUM_CLASSES],
+    charged_ticks: [u64; NUM_CLASSES],
+    total_charged_ticks: u64,
+    window_pick_count: [u64; NUM_CLASSES],
+    window_charged_ticks: [u64; NUM_CLASSES],
+    window_total_charged_ticks: u64,
 }
 
 impl<T, const S: usize> EevdfClassScheduler<T, S> {
@@ -130,11 +145,24 @@ impl<T, const S: usize> EevdfClassScheduler<T, S> {
             ],
             min_vruntime: 0,
             current_class: None,
+            pick_count: [0; NUM_CLASSES],
+            charged_ticks: [0; NUM_CLASSES],
+            total_charged_ticks: 0,
+            window_pick_count: [0; NUM_CLASSES],
+            window_charged_ticks: [0; NUM_CLASSES],
+            window_total_charged_ticks: 0,
         }
     }
 
     pub fn scheduler_name() -> &'static str {
         "EEVDF-Class"
+    }
+
+    pub fn stats(&self) -> EevdfClassStats {
+        EevdfClassStats {
+            pick_count: self.pick_count,
+            charged_ticks: self.charged_ticks,
+        }
     }
 
     fn count_runnable_classes(&self) -> usize {
@@ -215,6 +243,33 @@ impl<T, const S: usize> EevdfClassScheduler<T, S> {
         }
         false
     }
+
+    fn maybe_log_stats(&mut self) {
+        if self.window_total_charged_ticks == 0
+            || self.window_total_charged_ticks % STATS_LOG_INTERVAL_TICKS != 0
+        {
+            return;
+        }
+        let total = self.window_total_charged_ticks as f64;
+        let i = self.window_charged_ticks[CLASS_INTERACTIVE as usize] as f64 * 100.0 / total;
+        let n = self.window_charged_ticks[CLASS_NORMAL as usize] as f64 * 100.0 / total;
+        let b = self.window_charged_ticks[CLASS_BACKGROUND as usize] as f64 * 100.0 / total;
+        info!(
+            "eevdf-class stats: picks=[{},{},{}] ticks=[{},{},{}] share(i/n/b)={:.1}%/{:.1}%/{:.1}%",
+            self.window_pick_count[CLASS_INTERACTIVE as usize],
+            self.window_pick_count[CLASS_NORMAL as usize],
+            self.window_pick_count[CLASS_BACKGROUND as usize],
+            self.window_charged_ticks[CLASS_INTERACTIVE as usize],
+            self.window_charged_ticks[CLASS_NORMAL as usize],
+            self.window_charged_ticks[CLASS_BACKGROUND as usize],
+            i,
+            n,
+            b
+        );
+        self.window_pick_count = [0; NUM_CLASSES];
+        self.window_charged_ticks = [0; NUM_CLASSES];
+        self.window_total_charged_ticks = 0;
+    }
 }
 
 impl<T, const S: usize> BaseScheduler for EevdfClassScheduler<T, S> {
@@ -257,6 +312,8 @@ impl<T, const S: usize> BaseScheduler for EevdfClassScheduler<T, S> {
         let class = &mut self.classes[class_idx];
         let task = class.queue.pop_front()?;
         class.nr_running -= 1;
+        self.pick_count[class_idx] = self.pick_count[class_idx].saturating_add(1);
+        self.window_pick_count[class_idx] = self.window_pick_count[class_idx].saturating_add(1);
 
         self.current_class = Some(class_idx);
         self.update_min_vruntime();
@@ -288,6 +345,12 @@ impl<T, const S: usize> BaseScheduler for EevdfClassScheduler<T, S> {
         if let Some(class_idx) = self.current_class {
             let class = &mut self.classes[class_idx];
             class.vruntime += VRUNTIME_SCALE / class.weight as u128;
+            self.charged_ticks[class_idx] = self.charged_ticks[class_idx].saturating_add(1);
+            self.total_charged_ticks = self.total_charged_ticks.saturating_add(1);
+            self.window_charged_ticks[class_idx] =
+                self.window_charged_ticks[class_idx].saturating_add(1);
+            self.window_total_charged_ticks = self.window_total_charged_ticks.saturating_add(1);
+            self.maybe_log_stats();
         }
 
         let old_slice = current.time_slice.fetch_sub(1, Ordering::Release);

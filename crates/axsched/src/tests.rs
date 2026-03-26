@@ -132,4 +132,24 @@ mod eevdf_priority {
         scheduler.put_prev_task(running, false);
         assert!(scheduler.pick_next_task().is_some());
     }
+
+    #[test]
+    fn test_eevdf_stats_count_picks_and_ticks() {
+        let mut scheduler = EevdfClassScheduler::<usize, 5>::new();
+        let t1 = Arc::new(EevdfTask::<usize, 5>::new(1));
+        let t2 = Arc::new(EevdfTask::<usize, 5>::new(2));
+        scheduler.add_task(t1);
+        scheduler.add_task(t2);
+
+        // Run a few scheduling cycles to accumulate stats.
+        for _ in 0..4 {
+            let next = scheduler.pick_next_task().unwrap();
+            let _ = scheduler.task_tick(&next);
+            scheduler.put_prev_task(next, false);
+        }
+
+        let stats = scheduler.stats();
+        assert!(stats.pick_count.iter().sum::<u64>() > 0);
+        assert!(stats.charged_ticks.iter().sum::<u64>() > 0);
+    }
 }
