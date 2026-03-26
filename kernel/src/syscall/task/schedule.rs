@@ -167,7 +167,7 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
 }
 
 pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
-    warn!("sys_setpriority <= which: {which}, who: {who}, prio: {prio}");
+    debug!("sys_setpriority <= which: {which}, who: {who}, prio: {prio}");
 
     if !(-20..=19).contains(&prio) {
         return Err(AxError::InvalidInput);
