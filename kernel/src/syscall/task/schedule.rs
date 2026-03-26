@@ -11,7 +11,7 @@ use linux_raw_sys::general::{
 use starry_vm::{VmMutPtr, VmPtr, vm_load, vm_write_slice};
 
 use crate::{
-    task::{get_process_data, get_process_group},
+    task::{get_process_data, get_process_group, AsThread},
     time::TimeValueLike,
 };
 
@@ -162,6 +162,34 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
                 Err(AxError::NoSuchProcess)
             }
         }
+        _ => Err(AxError::InvalidInput),
+    }
+}
+
+pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
+    warn!("sys_setpriority <= which: {which}, who: {who}, prio: {prio}");
+
+    if !(-20..=19).contains(&prio) {
+        return Err(AxError::InvalidInput);
+    }
+
+    match which {
+        PRIO_PROCESS => {
+            // Minimal support: allow changing the current process only.
+            // On Linux, `nice` may pass `who = 0` or `who = getpid()`.
+            let curr_pid = current().as_thread().proc_data.proc.pid() as u32;
+            if who != 0 && who != curr_pid {
+                // We don't support changing other processes yet.
+                let _proc = get_process_data(who)?;
+                return Err(AxError::OperationNotPermitted);
+            }
+            if axtask::set_priority(prio as isize) {
+                Ok(0)
+            } else {
+                Err(AxError::InvalidInput)
+            }
+        }
+        PRIO_PGRP | PRIO_USER => Err(AxError::OperationNotPermitted),
         _ => Err(AxError::InvalidInput),
     }
 }

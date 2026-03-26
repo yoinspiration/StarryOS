@@ -299,13 +299,58 @@ impl<T, const S: usize> BaseScheduler for EevdfClassScheduler<T, S> {
     }
 
     fn set_priority(&mut self, task: &Self::SchedItem, prio: isize) -> bool {
-        if (-20..=19).contains(&prio) {
-            let new_class = nice_to_class(prio);
-            task.set_class_id(new_class);
-            true
-        } else {
-            false
+        if !(-20..=19).contains(&prio) {
+            return false;
         }
+
+        let old_class = task.class_id() as usize;
+        let new_class = nice_to_class(prio) as usize;
+        if old_class == new_class {
+            return true;
+        }
+
+        // BaseScheduler::set_priority is called for the *current running task*,
+        // which is not necessarily inside any ready queue. However, we also make
+        // this logic robust for enqueued tasks by removing it from the queue
+        // it currently resides in (if present) and re-inserting into the new class.
+
+        // 1) Try remove from any class queue (task may already be enqueued).
+        for idx in 0..NUM_CLASSES {
+            if self.classes[idx].nr_running == 0 {
+                continue;
+            }
+            // SAFETY: task is expected to either be in the queue or not. If it is
+            // in the queue, we remove it to keep scheduler bookkeeping consistent.
+            if let Some(removed_task) = unsafe { self.classes[idx].queue.remove(task) } {
+                // Update class id before inserting.
+                removed_task.set_class_id(new_class as u8);
+
+                let target = &mut self.classes[new_class];
+                if target.nr_running == 0 {
+                    target.vruntime = target.vruntime.max(self.min_vruntime);
+                }
+                target.queue.push_back(removed_task);
+                target.nr_running += 1;
+
+                // Decrement old class accounting.
+                self.classes[idx].nr_running = self.classes[idx].nr_running.saturating_sub(1);
+
+                // If the removed task was the current running one, keep current_class aligned.
+                if self.current_class == Some(idx) {
+                    self.current_class = Some(new_class);
+                }
+
+                self.update_min_vruntime();
+                return true;
+            }
+        }
+
+        // 2) Not found in any queue: treat as running task.
+        task.set_class_id(new_class as u8);
+        if self.current_class == Some(old_class) {
+            self.current_class = Some(new_class);
+        }
+        true
     }
 }
 
