@@ -36,6 +36,38 @@ for i in $(seq 1 50); do /usr/bin/time -f "%e" ls >/dev/null; done > /root/ls_ni
 killall yes 2>/dev/null
 ```
 
+## Regression Automation (Issue 5)
+
+Canonical script path in repo:
+
+- `scripts/bench-regression-eevdf.sh`
+
+Because host sharing (`9p`) is not available in the current kernel path, run a guest-local copy:
+
+```sh
+# after copying script content to guest local path:
+chmod +x /root/bench-regression-eevdf.sh
+
+# one command: run N=50 + N=200, base + nice19, emit table, compare baseline
+/root/bench-regression-eevdf.sh
+
+# optional: refresh baseline after intentional tuning
+BASELINE_MODE=refresh /root/bench-regression-eevdf.sh
+```
+
+Generated artifacts (inside guest):
+
+- `/root/bench-results/latest.tsv` (latest raw metrics)
+- `/root/bench-results/latest-table.md` (markdown result table)
+- `/root/bench-results/baseline.tsv` (comparison baseline)
+- `/root/bench-results/history.tsv` (timestamped archive)
+
+Semi-automatic doc update workflow:
+
+1. Run `/root/bench-regression-eevdf.sh`
+2. Copy table content from `/root/bench-results/latest-table.md`
+3. Replace the "Stability Stress Results" table in this document
+
 Summary command:
 
 ```sh
@@ -52,11 +84,13 @@ sort -n /root/ls_nice19.txt | awk '{a[++n]=$1} END{printf("nice19 N=%d p50=%.3f 
 
 | Scenario | N | p50 | p95 | p99 | max |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| base | 200 | 0.630 | 0.640 | 0.640 | 0.640 |
-| nice19 | 200 | 0.050 | 0.060 | 0.060 | 0.070 |
+| base | 50 | 0.630 | 0.630 | 0.850 | 0.850 |
+| nice19 | 50 | 0.050 | 0.050 | 0.050 | 0.060 |
+| base | 200 | 0.630 | 0.630 | 0.850 | 0.860 |
+| nice19 | 200 | 0.050 | 0.060 | 0.060 | 0.060 |
 
 Compared with `base`, the `nice19` run keeps a clear latency advantage at tail metrics
-(`p95/p99/max`), and no regression is observed in this stress sample.
+(`p95/p99/max`) at both sample sizes, and no regression is observed in this baseline run.
 
 ## Scheduler Stats Observability
 
@@ -141,6 +175,8 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
 
 ## Current Limitations
 
+- Host directory sharing via `mount -t 9p` is not supported in the current kernel path.
+  Use guest-local paths (for example `/root/bench-eevdf-nice.sh`) for benchmark automation.
 - `setpriority` support is intentionally minimal:
   - Only `PRIO_PROCESS` is supported.
   - `PRIO_PROCESS` supports current process (`who == 0`) and specified process (`who == pid`).
