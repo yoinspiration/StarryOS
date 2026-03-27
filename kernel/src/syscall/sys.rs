@@ -4,37 +4,42 @@ use core::ffi::c_char;
 use axconfig::ARCH;
 use axerrno::{AxError, AxResult};
 use axfs::FS_CONTEXT;
+use axtask::current;
 use linux_raw_sys::{
     general::{GRND_INSECURE, GRND_NONBLOCK, GRND_RANDOM},
     system::{new_utsname, sysinfo},
 };
 use starry_vm::{VmMutPtr, vm_write_slice};
 
-use crate::task::processes;
+use crate::task::{AsThread, processes};
 
 pub fn sys_getuid() -> AxResult<isize> {
-    Ok(0)
+    Ok(current().as_thread().proc_data.uid() as isize)
 }
 
 pub fn sys_geteuid() -> AxResult<isize> {
-    Ok(0)
+    Ok(current().as_thread().proc_data.euid() as isize)
 }
 
 pub fn sys_getgid() -> AxResult<isize> {
-    Ok(0)
+    Ok(current().as_thread().proc_data.gid() as isize)
 }
 
 pub fn sys_getegid() -> AxResult<isize> {
-    Ok(0)
+    Ok(current().as_thread().proc_data.egid() as isize)
 }
 
 pub fn sys_setuid(_uid: u32) -> AxResult<isize> {
     debug!("sys_setuid <= uid: {_uid}");
+    // Minimal model: apply to current process only.
+    current().as_thread().proc_data.set_uid_pair(_uid, _uid);
     Ok(0)
 }
 
 pub fn sys_setgid(_gid: u32) -> AxResult<isize> {
     debug!("sys_setgid <= gid: {_gid}");
+    // Minimal model: apply to current process only.
+    current().as_thread().proc_data.set_gid_pair(_gid, _gid);
     Ok(0)
 }
 

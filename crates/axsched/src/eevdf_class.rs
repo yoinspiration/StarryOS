@@ -28,6 +28,12 @@ pub struct EevdfClassStats {
     pub charged_ticks: [u64; NUM_CLASSES],
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct EevdfClassWindowStats {
+    pub pick_count: [u64; NUM_CLASSES],
+    pub charged_ticks: [u64; NUM_CLASSES],
+}
+
 fn nice_to_class(nice: isize) -> u8 {
     if nice < 0 {
         CLASS_INTERACTIVE
@@ -133,6 +139,8 @@ pub struct EevdfClassScheduler<T, const MAX_TIME_SLICE: usize> {
     window_pick_count: [u64; NUM_CLASSES],
     window_charged_ticks: [u64; NUM_CLASSES],
     window_total_charged_ticks: u64,
+    stats_enabled: bool,
+    stats_window_ticks: u64,
 }
 
 impl<T, const S: usize> EevdfClassScheduler<T, S> {
@@ -151,6 +159,8 @@ impl<T, const S: usize> EevdfClassScheduler<T, S> {
             window_pick_count: [0; NUM_CLASSES],
             window_charged_ticks: [0; NUM_CLASSES],
             window_total_charged_ticks: 0,
+            stats_enabled: true,
+            stats_window_ticks: STATS_LOG_INTERVAL_TICKS,
         }
     }
 
@@ -162,6 +172,23 @@ impl<T, const S: usize> EevdfClassScheduler<T, S> {
         EevdfClassStats {
             pick_count: self.pick_count,
             charged_ticks: self.charged_ticks,
+        }
+    }
+
+    pub fn window_stats(&self) -> EevdfClassWindowStats {
+        EevdfClassWindowStats {
+            pick_count: self.window_pick_count,
+            charged_ticks: self.window_charged_ticks,
+        }
+    }
+
+    pub fn set_stats_config(&mut self, enabled: bool, window_ticks: u64) {
+        self.stats_enabled = enabled;
+        self.stats_window_ticks = window_ticks.max(1);
+        if !enabled {
+            self.window_pick_count = [0; NUM_CLASSES];
+            self.window_charged_ticks = [0; NUM_CLASSES];
+            self.window_total_charged_ticks = 0;
         }
     }
 
@@ -245,8 +272,11 @@ impl<T, const S: usize> EevdfClassScheduler<T, S> {
     }
 
     fn maybe_log_stats(&mut self) {
+        if !self.stats_enabled {
+            return;
+        }
         if self.window_total_charged_ticks == 0
-            || self.window_total_charged_ticks % STATS_LOG_INTERVAL_TICKS != 0
+            || self.window_total_charged_ticks % self.stats_window_ticks != 0
         {
             return;
         }
@@ -313,7 +343,10 @@ impl<T, const S: usize> BaseScheduler for EevdfClassScheduler<T, S> {
         let task = class.queue.pop_front()?;
         class.nr_running -= 1;
         self.pick_count[class_idx] = self.pick_count[class_idx].saturating_add(1);
-        self.window_pick_count[class_idx] = self.window_pick_count[class_idx].saturating_add(1);
+        if self.stats_enabled {
+            self.window_pick_count[class_idx] =
+                self.window_pick_count[class_idx].saturating_add(1);
+        }
 
         self.current_class = Some(class_idx);
         self.update_min_vruntime();
@@ -347,9 +380,11 @@ impl<T, const S: usize> BaseScheduler for EevdfClassScheduler<T, S> {
             class.vruntime += VRUNTIME_SCALE / class.weight as u128;
             self.charged_ticks[class_idx] = self.charged_ticks[class_idx].saturating_add(1);
             self.total_charged_ticks = self.total_charged_ticks.saturating_add(1);
-            self.window_charged_ticks[class_idx] =
-                self.window_charged_ticks[class_idx].saturating_add(1);
-            self.window_total_charged_ticks = self.window_total_charged_ticks.saturating_add(1);
+            if self.stats_enabled {
+                self.window_charged_ticks[class_idx] =
+                    self.window_charged_ticks[class_idx].saturating_add(1);
+                self.window_total_charged_ticks = self.window_total_charged_ticks.saturating_add(1);
+            }
             self.maybe_log_stats();
         }
 

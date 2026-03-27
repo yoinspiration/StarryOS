@@ -220,6 +220,11 @@ pub struct ProcessData {
     umask: AtomicU32,
     /// The process nice value in range [-20, 19].
     nice: AtomicI32,
+    /// Process credentials (minimal model for syscall permission checks).
+    uid: AtomicU32,
+    gid: AtomicU32,
+    euid: AtomicU32,
+    egid: AtomicU32,
 }
 
 impl ProcessData {
@@ -232,6 +237,22 @@ impl ProcessData {
         signal_actions: Arc<SpinNoIrq<SignalActions>>,
         exit_signal: Option<Signo>,
     ) -> Arc<Self> {
+        let (uid, gid, euid, egid) = if let Some(curr) = axtask::current_may_uninit() {
+            if let Some(thread) = curr.try_as_thread() {
+                let proc_data = &thread.proc_data;
+                (
+                    proc_data.uid(),
+                    proc_data.gid(),
+                    proc_data.euid(),
+                    proc_data.egid(),
+                )
+            } else {
+                (0, 0, 0, 0)
+            }
+        } else {
+            (0, 0, 0, 0)
+        };
+
         Arc::new(Self {
             proc,
             exe_path: RwLock::new(exe_path),
@@ -255,6 +276,10 @@ impl ProcessData {
 
             umask: AtomicU32::new(0o022),
             nice: AtomicI32::new(0),
+            uid: AtomicU32::new(uid),
+            gid: AtomicU32::new(gid),
+            euid: AtomicU32::new(euid),
+            egid: AtomicU32::new(egid),
         })
     }
 
@@ -297,5 +322,31 @@ impl ProcessData {
     /// Set the process nice value.
     pub fn set_nice(&self, nice: i32) {
         self.nice.store(nice, Ordering::SeqCst);
+    }
+
+    pub fn uid(&self) -> u32 {
+        self.uid.load(Ordering::SeqCst)
+    }
+
+    pub fn gid(&self) -> u32 {
+        self.gid.load(Ordering::SeqCst)
+    }
+
+    pub fn euid(&self) -> u32 {
+        self.euid.load(Ordering::SeqCst)
+    }
+
+    pub fn egid(&self) -> u32 {
+        self.egid.load(Ordering::SeqCst)
+    }
+
+    pub fn set_uid_pair(&self, uid: u32, euid: u32) {
+        self.uid.store(uid, Ordering::SeqCst);
+        self.euid.store(euid, Ordering::SeqCst);
+    }
+
+    pub fn set_gid_pair(&self, gid: u32, egid: u32) {
+        self.gid.store(gid, Ordering::SeqCst);
+        self.egid.store(egid, Ordering::SeqCst);
     }
 }

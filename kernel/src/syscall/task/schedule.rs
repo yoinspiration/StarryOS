@@ -61,11 +61,17 @@ fn nice_to_getpriority_value(nice: i32) -> isize {
     (20 - nice) as isize
 }
 
-fn has_setpriority_permission(curr_pid: u32, target_pid: u32, curr_euid: u32) -> bool {
+fn has_setpriority_permission(
+    curr_pid: u32,
+    target_pid: u32,
+    curr_euid: u32,
+    target_euid: u32,
+) -> bool {
     // Linux-like minimal rule:
     // - a process can always adjust its own priority
     // - privileged user (euid == 0) can adjust others
-    curr_pid == target_pid || curr_euid == 0
+    // - same euid can adjust others (phase-1 permission model)
+    curr_pid == target_pid || curr_euid == 0 || curr_euid == target_euid
 }
 
 pub fn sys_sched_yield() -> AxResult<isize> {
@@ -236,10 +242,10 @@ pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
         }
         SetPriorityTarget::UnsupportedProcess => {
             // Minimal support for PRIO_PROCESS + specified pid.
-            if !has_setpriority_permission(curr_pid, who, curr_euid) {
+            let proc_data = get_process_data(who)?;
+            if !has_setpriority_permission(curr_pid, who, curr_euid, proc_data.euid()) {
                 return Err(AxError::OperationNotPermitted);
             }
-            let proc_data = get_process_data(who)?;
             proc_data.set_nice(prio);
             if apply_nice_to_process(who, prio)? {
                 Ok(0)
@@ -301,8 +307,9 @@ mod tests {
 
     #[test]
     fn setpriority_permission_allows_self_or_root() {
-        assert!(has_setpriority_permission(100, 100, 1000));
-        assert!(has_setpriority_permission(100, 200, 0));
-        assert!(!has_setpriority_permission(100, 200, 1000));
+        assert!(has_setpriority_permission(100, 100, 1000, 2000));
+        assert!(has_setpriority_permission(100, 200, 0, 2000));
+        assert!(has_setpriority_permission(100, 200, 1000, 1000));
+        assert!(!has_setpriority_permission(100, 200, 1000, 2000));
     }
 }

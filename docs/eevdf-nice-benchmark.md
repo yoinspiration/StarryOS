@@ -210,10 +210,20 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
   - Only `PRIO_PROCESS` is supported.
   - `PRIO_PROCESS` supports current process (`who == 0`) and specified process (`who == pid`).
   - `PRIO_PROCESS` currently applies one process-wide nice to all its threads.
-  - Permission rule is currently minimal: self process or privileged user (`euid == 0`) can update.
+  - Permission rule (phase-1): self process, same euid, or privileged user (`euid == 0`) can update.
   - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
 - `getpriority` currently aligns with the same scope boundary:
   - `PRIO_PROCESS` returns the stored process nice (with `20 - nice` encoding).
   - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
 - This benchmark is single-machine and short-run (`N=50`); larger samples and additional workloads
   are recommended for publication-grade claims.
+
+## Scheduler Stats Productization Notes
+
+`EevdfClassScheduler` now exposes configurable observability controls:
+
+- `set_stats_config(enabled, window_ticks)` toggles periodic stats logs and sets report window size.
+- `stats()` returns cumulative counters.
+- `window_stats()` returns in-window counters.
+
+Default behavior remains enabled with a 256-tick report window to preserve prior workflow.

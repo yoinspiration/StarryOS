@@ -152,4 +152,28 @@ mod eevdf_priority {
         assert!(stats.pick_count.iter().sum::<u64>() > 0);
         assert!(stats.charged_ticks.iter().sum::<u64>() > 0);
     }
+
+    #[test]
+    fn test_eevdf_window_stats_configurable_and_disableable() {
+        let mut scheduler = EevdfClassScheduler::<usize, 5>::new();
+        let t = Arc::new(EevdfTask::<usize, 5>::new(1));
+        scheduler.add_task(t);
+
+        scheduler.set_stats_config(false, 32);
+        let next = scheduler.pick_next_task().unwrap();
+        let _ = scheduler.task_tick(&next);
+        scheduler.put_prev_task(next, false);
+
+        let window = scheduler.window_stats();
+        assert_eq!(window.pick_count.iter().sum::<u64>(), 0);
+        assert_eq!(window.charged_ticks.iter().sum::<u64>(), 0);
+
+        scheduler.set_stats_config(true, 1);
+        let next = scheduler.pick_next_task().unwrap();
+        let _ = scheduler.task_tick(&next);
+        scheduler.put_prev_task(next, false);
+        let window = scheduler.window_stats();
+        // window is reset immediately after each 1-tick report
+        assert_eq!(window.pick_count.iter().sum::<u64>(), 0);
+    }
 }
