@@ -11,6 +11,7 @@ use linux_raw_sys::general::{
 use starry_vm::{VmMutPtr, VmPtr, vm_load, vm_write_slice};
 
 use crate::{
+    syscall::sys::sys_geteuid,
     task::{get_process_data, get_process_group, tasks, AsThread},
     time::TimeValueLike,
 };
@@ -52,6 +53,19 @@ fn apply_nice_to_process(pid: u32, prio: i32) -> AxResult<bool> {
         applied = true;
     }
     Ok(applied)
+}
+
+fn nice_to_getpriority_value(nice: i32) -> isize {
+    // Keep Linux-compatible return encoding used by this kernel path.
+    // Nice range [-20, 19] maps to [40, 1].
+    (20 - nice) as isize
+}
+
+fn has_setpriority_permission(curr_pid: u32, target_pid: u32, curr_euid: u32) -> bool {
+    // Linux-like minimal rule:
+    // - a process can always adjust its own priority
+    // - privileged user (euid == 0) can adjust others
+    curr_pid == target_pid || curr_euid == 0
 }
 
 pub fn sys_sched_yield() -> AxResult<isize> {
@@ -184,9 +198,7 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
     match which {
         PRIO_PROCESS => {
             let proc_data = get_process_data(who)?;
-            // Keep Linux-compatible return encoding used by this kernel path.
-            // Nice range [-20, 19] maps to [40, 1].
-            Ok((20 - proc_data.nice()) as isize)
+            Ok(nice_to_getpriority_value(proc_data.nice()))
         }
         PRIO_PGRP => {
             // TODO: align semantics with sys_setpriority by rejecting unsupported
@@ -219,6 +231,7 @@ pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
     }
 
     let curr_pid = current().as_thread().proc_data.proc.pid() as u32;
+    let curr_euid = sys_geteuid()? as u32;
     match classify_setpriority_target(which, who, curr_pid) {
         SetPriorityTarget::CurrentProcess => {
             // On Linux, `nice` may pass `who = 0` or `who = getpid()`.
@@ -234,6 +247,9 @@ pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
         }
         SetPriorityTarget::UnsupportedProcess => {
             // Minimal support for PRIO_PROCESS + specified pid.
+            if !has_setpriority_permission(curr_pid, who, curr_euid) {
+                return Err(AxError::OperationNotPermitted);
+            }
             let proc_data = get_process_data(who)?;
             proc_data.set_nice(prio);
             if apply_nice_to_process(who, prio)? {
@@ -285,5 +301,19 @@ mod tests {
             classify_setpriority_target(999999, 0, 123),
             SetPriorityTarget::InvalidScope
         );
+    }
+
+    #[test]
+    fn getpriority_value_encoding_matches_nice_range() {
+        assert_eq!(nice_to_getpriority_value(-20), 40);
+        assert_eq!(nice_to_getpriority_value(0), 20);
+        assert_eq!(nice_to_getpriority_value(19), 1);
+    }
+
+    #[test]
+    fn setpriority_permission_allows_self_or_root() {
+        assert!(has_setpriority_permission(100, 100, 1000));
+        assert!(has_setpriority_permission(100, 200, 0));
+        assert!(!has_setpriority_permission(100, 200, 1000));
     }
 }

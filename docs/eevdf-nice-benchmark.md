@@ -145,6 +145,7 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
   - Only `PRIO_PROCESS` is supported.
   - `PRIO_PROCESS` supports current process (`who == 0`) and specified process (`who == pid`).
   - `PRIO_PROCESS` currently applies one process-wide nice to all its threads.
+  - Permission rule is currently minimal: self process or privileged user (`euid == 0`) can update.
   - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
 - `getpriority` remains partially implemented for compatibility:
   - `PRIO_PROCESS` now returns the stored process nice (using this kernel path's return encoding).
