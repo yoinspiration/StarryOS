@@ -168,6 +168,35 @@ Conclusion:
 - Minimal `PRIO_PROCESS` support for specified pid is functional.
 - Basic error-path semantics for invalid input and missing process are preserved.
 
+## Syscall Semantics Matrix (Current Stage)
+
+| Syscall | which | who | Current behavior |
+| --- | --- | --- | --- |
+| `setpriority` | `PRIO_PROCESS` | `0` or valid `pid` | supported (permission-checked) |
+| `setpriority` | `PRIO_PGRP` | any | `OperationNotPermitted` |
+| `setpriority` | `PRIO_USER` | any | `OperationNotPermitted` |
+| `getpriority` | `PRIO_PROCESS` | `0` or valid `pid` | supported (reads stored process nice) |
+| `getpriority` | `PRIO_PGRP` | any | `OperationNotPermitted` |
+| `getpriority` | `PRIO_USER` | any | `OperationNotPermitted` |
+
+### getpriority Value Encoding
+
+Current kernel path uses Linux-compatible encoding:
+
+- returned value = `20 - nice`
+- mapping examples:
+  - `nice = -20` -> `40`
+  - `nice = 0` -> `20`
+  - `nice = 19` -> `1`
+
+### Syscall Smoke Script
+
+Use `scripts/priority-syscall-smoke.sh` (run inside guest shell) to cover:
+
+- `PRIO_PROCESS` boundary values `-20/0/19`
+- invalid value rejection
+- missing pid rejection
+
 ## Conclusion
 
 `nice` is effective with the current EEVDF-class integration. Lowering background task priority
@@ -183,9 +212,8 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
   - `PRIO_PROCESS` currently applies one process-wide nice to all its threads.
   - Permission rule is currently minimal: self process or privileged user (`euid == 0`) can update.
   - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
-- `getpriority` remains partially implemented for compatibility:
-  - `PRIO_PROCESS` now returns the stored process nice (using this kernel path's return encoding).
-  - `PRIO_PGRP`/`PRIO_USER` are not yet semantically aligned with the minimal `setpriority` boundary.
-  - A future update should return effective nice values and unify scope handling.
+- `getpriority` currently aligns with the same scope boundary:
+  - `PRIO_PROCESS` returns the stored process nice (with `20 - nice` encoding).
+  - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
 - This benchmark is single-machine and short-run (`N=50`); larger samples and additional workloads
   are recommended for publication-grade claims.

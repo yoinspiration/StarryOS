@@ -12,7 +12,7 @@ use starry_vm::{VmMutPtr, VmPtr, vm_load, vm_write_slice};
 
 use crate::{
     syscall::sys::sys_geteuid,
-    task::{get_process_data, get_process_group, tasks, AsThread},
+    task::{get_process_data, tasks, AsThread},
     time::TimeValueLike,
 };
 
@@ -197,24 +197,13 @@ pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
 
     match which {
         PRIO_PROCESS => {
+            // Supported scope in current stage: process only.
+            // `who == 0` means current process; otherwise target pid.
             let proc_data = get_process_data(who)?;
             Ok(nice_to_getpriority_value(proc_data.nice()))
         }
-        PRIO_PGRP => {
-            // TODO: align semantics with sys_setpriority by rejecting unsupported
-            // scopes, or implement real process-group priority querying.
-            if who != 0 {
-                let _pg = get_process_group(who)?;
-            }
-            Ok(20)
-        }
-        PRIO_USER => {
-            if who == 0 {
-                Ok(20)
-            } else {
-                Err(AxError::NoSuchProcess)
-            }
-        }
+        // Keep unsupported scopes consistent with sys_setpriority.
+        PRIO_PGRP | PRIO_USER => Err(AxError::OperationNotPermitted),
         _ => Err(AxError::InvalidInput),
     }
 }
