@@ -183,6 +183,26 @@ pub fn set_priority_for_task(task: &AxTaskRef, prio: isize) -> bool {
     crate::run_queue::run_queue_for_task::<NoPreemptIrqSave>(task).set_task_priority(task, prio)
 }
 
+/// Configure EEVDF-class scheduler statistics output behavior.
+///
+/// Only available when `sched-eevdf-class` is enabled.
+#[cfg(feature = "sched-eevdf-class")]
+pub fn set_scheduler_stats_config(enabled: bool, window_ticks: u64) {
+    current_run_queue::<NoPreemptIrqSave>().set_scheduler_stats_config(enabled, window_ticks);
+}
+
+/// Read cumulative EEVDF-class scheduler statistics.
+#[cfg(feature = "sched-eevdf-class")]
+pub fn scheduler_stats() -> axsched::EevdfClassStats {
+    current_run_queue::<NoPreemptIrqSave>().scheduler_stats()
+}
+
+/// Read current-window EEVDF-class scheduler statistics.
+#[cfg(feature = "sched-eevdf-class")]
+pub fn scheduler_window_stats() -> axsched::EevdfClassWindowStats {
+    current_run_queue::<NoPreemptIrqSave>().scheduler_window_stats()
+}
+
 /// Set the affinity for the current task.
 /// [`AxCpuMask`] is used to specify the CPU affinity.
 /// Returns `true` if the affinity is set successfully.

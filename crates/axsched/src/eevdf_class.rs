@@ -280,21 +280,42 @@ impl<T, const S: usize> EevdfClassScheduler<T, S> {
         {
             return;
         }
-        let total = self.window_total_charged_ticks as f64;
-        let i = self.window_charged_ticks[CLASS_INTERACTIVE as usize] as f64 * 100.0 / total;
-        let n = self.window_charged_ticks[CLASS_NORMAL as usize] as f64 * 100.0 / total;
-        let b = self.window_charged_ticks[CLASS_BACKGROUND as usize] as f64 * 100.0 / total;
+        let window_total = self.window_total_charged_ticks as f64;
+        let wi =
+            self.window_charged_ticks[CLASS_INTERACTIVE as usize] as f64 * 100.0 / window_total;
+        let wn = self.window_charged_ticks[CLASS_NORMAL as usize] as f64 * 100.0 / window_total;
+        let wb =
+            self.window_charged_ticks[CLASS_BACKGROUND as usize] as f64 * 100.0 / window_total;
+        let (ci, cn, cb) = if self.total_charged_ticks == 0 {
+            (0.0, 0.0, 0.0)
+        } else {
+            let cumulative_total = self.total_charged_ticks as f64;
+            (
+                self.charged_ticks[CLASS_INTERACTIVE as usize] as f64 * 100.0 / cumulative_total,
+                self.charged_ticks[CLASS_NORMAL as usize] as f64 * 100.0 / cumulative_total,
+                self.charged_ticks[CLASS_BACKGROUND as usize] as f64 * 100.0 / cumulative_total,
+            )
+        };
         info!(
-            "eevdf-class stats: picks=[{},{},{}] ticks=[{},{},{}] share(i/n/b)={:.1}%/{:.1}%/{:.1}%",
+            "eevdf-class stats: window_picks=[{},{},{}] window_ticks=[{},{},{}] window_share(i/n/b)={:.1}%/{:.1}%/{:.1}% cumulative_picks=[{},{},{}] cumulative_ticks=[{},{},{}] cumulative_share(i/n/b)={:.1}%/{:.1}%/{:.1}%",
             self.window_pick_count[CLASS_INTERACTIVE as usize],
             self.window_pick_count[CLASS_NORMAL as usize],
             self.window_pick_count[CLASS_BACKGROUND as usize],
             self.window_charged_ticks[CLASS_INTERACTIVE as usize],
             self.window_charged_ticks[CLASS_NORMAL as usize],
             self.window_charged_ticks[CLASS_BACKGROUND as usize],
-            i,
-            n,
-            b
+            wi,
+            wn,
+            wb,
+            self.pick_count[CLASS_INTERACTIVE as usize],
+            self.pick_count[CLASS_NORMAL as usize],
+            self.pick_count[CLASS_BACKGROUND as usize],
+            self.charged_ticks[CLASS_INTERACTIVE as usize],
+            self.charged_ticks[CLASS_NORMAL as usize],
+            self.charged_ticks[CLASS_BACKGROUND as usize],
+            ci,
+            cn,
+            cb
         );
         self.window_pick_count = [0; NUM_CLASSES];
         self.window_charged_ticks = [0; NUM_CLASSES];

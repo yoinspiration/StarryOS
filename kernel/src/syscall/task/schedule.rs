@@ -11,7 +11,7 @@ use linux_raw_sys::general::{
 use starry_vm::{VmMutPtr, VmPtr, vm_load, vm_write_slice};
 
 use crate::{
-    syscall::sys::sys_geteuid,
+    syscall::sys::{sys_geteuid, sys_getuid},
     task::{get_process_data, tasks, AsThread},
     time::TimeValueLike,
 };
@@ -24,17 +24,31 @@ enum SetPriorityTarget {
     InvalidScope,
 }
 
-fn classify_setpriority_target(which: u32, who: u32, curr_pid: u32) -> SetPriorityTarget {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PriorityScope {
+    Process,
+}
+
+fn decode_priority_scope(which: u32) -> AxResult<PriorityScope> {
     match which {
-        PRIO_PROCESS => {
+        PRIO_PROCESS => Ok(PriorityScope::Process),
+        PRIO_PGRP | PRIO_USER => Err(AxError::OperationNotPermitted),
+        _ => Err(AxError::InvalidInput),
+    }
+}
+
+fn classify_setpriority_target(which: u32, who: u32, curr_pid: u32) -> SetPriorityTarget {
+    match decode_priority_scope(which) {
+        Ok(PriorityScope::Process) => {
             if who == 0 || who == curr_pid {
                 SetPriorityTarget::CurrentProcess
             } else {
                 SetPriorityTarget::UnsupportedProcess
             }
         }
-        PRIO_PGRP | PRIO_USER => SetPriorityTarget::UnsupportedScope,
-        _ => SetPriorityTarget::InvalidScope,
+        Err(AxError::OperationNotPermitted) => SetPriorityTarget::UnsupportedScope,
+        Err(AxError::InvalidInput) => SetPriorityTarget::InvalidScope,
+        Err(_) => SetPriorityTarget::InvalidScope,
     }
 }
 
@@ -64,14 +78,15 @@ fn nice_to_getpriority_value(nice: i32) -> isize {
 fn has_setpriority_permission(
     curr_pid: u32,
     target_pid: u32,
+    curr_uid: u32,
+    target_uid: u32,
     curr_euid: u32,
-    target_euid: u32,
 ) -> bool {
-    // Linux-like minimal rule:
+    // Linux-like staged rule:
     // - a process can always adjust its own priority
     // - privileged user (euid == 0) can adjust others
-    // - same euid can adjust others (phase-1 permission model)
-    curr_pid == target_pid || curr_euid == 0 || curr_euid == target_euid
+    // - same uid can adjust others (phase-2 minimal ownership model)
+    curr_pid == target_pid || curr_euid == 0 || curr_uid == target_uid
 }
 
 pub fn sys_sched_yield() -> AxResult<isize> {
@@ -201,16 +216,15 @@ pub fn sys_sched_getparam(_pid: i32, _param: *mut ()) -> AxResult<isize> {
 pub fn sys_getpriority(which: u32, who: u32) -> AxResult<isize> {
     debug!("sys_getpriority <= which: {which}, who: {who}");
 
-    match which {
-        PRIO_PROCESS => {
-            // Supported scope in current stage: process only.
-            // `who == 0` means current process; otherwise target pid.
+    match decode_priority_scope(which)? {
+        PriorityScope::Process => {
+            // Current stage support matrix:
+            // - PRIO_PROCESS only
+            // - `who == 0` => current process
+            // - other `who` => process pid
             let proc_data = get_process_data(who)?;
             Ok(nice_to_getpriority_value(proc_data.nice()))
         }
-        // Keep unsupported scopes consistent with sys_setpriority.
-        PRIO_PGRP | PRIO_USER => Err(AxError::OperationNotPermitted),
-        _ => Err(AxError::InvalidInput),
     }
 }
 
@@ -227,6 +241,7 @@ pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
 
     let curr_pid = current().as_thread().proc_data.proc.pid() as u32;
     let curr_euid = sys_geteuid()? as u32;
+    let curr_uid = sys_getuid()? as u32;
     match classify_setpriority_target(which, who, curr_pid) {
         SetPriorityTarget::CurrentProcess => {
             // On Linux, `nice` may pass `who = 0` or `who = getpid()`.
@@ -243,7 +258,7 @@ pub fn sys_setpriority(which: u32, who: u32, prio: i32) -> AxResult<isize> {
         SetPriorityTarget::UnsupportedProcess => {
             // Minimal support for PRIO_PROCESS + specified pid.
             let proc_data = get_process_data(who)?;
-            if !has_setpriority_permission(curr_pid, who, curr_euid, proc_data.euid()) {
+            if !has_setpriority_permission(curr_pid, who, curr_uid, proc_data.uid(), curr_euid) {
                 return Err(AxError::OperationNotPermitted);
             }
             proc_data.set_nice(prio);
@@ -307,9 +322,23 @@ mod tests {
 
     #[test]
     fn setpriority_permission_allows_self_or_root() {
-        assert!(has_setpriority_permission(100, 100, 1000, 2000));
-        assert!(has_setpriority_permission(100, 200, 0, 2000));
-        assert!(has_setpriority_permission(100, 200, 1000, 1000));
-        assert!(!has_setpriority_permission(100, 200, 1000, 2000));
+        assert!(has_setpriority_permission(100, 100, 1000, 2000, 1001));
+        assert!(has_setpriority_permission(100, 200, 1000, 2000, 0));
+        assert!(has_setpriority_permission(100, 200, 1000, 1000, 1001));
+        assert!(!has_setpriority_permission(100, 200, 1000, 2000, 1001));
+    }
+
+    #[test]
+    fn decode_priority_scope_has_consistent_errors() {
+        assert_eq!(decode_priority_scope(PRIO_PROCESS), Ok(PriorityScope::Process));
+        assert_eq!(
+            decode_priority_scope(PRIO_PGRP),
+            Err(AxError::OperationNotPermitted)
+        );
+        assert_eq!(
+            decode_priority_scope(PRIO_USER),
+            Err(AxError::OperationNotPermitted)
+        );
+        assert_eq!(decode_priority_scope(999999), Err(AxError::InvalidInput));
     }
 }

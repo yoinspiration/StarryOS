@@ -168,16 +168,28 @@ Conclusion:
 - Minimal `PRIO_PROCESS` support for specified pid is functional.
 - Basic error-path semantics for invalid input and missing process are preserved.
 
-## Syscall Semantics Matrix (Current Stage)
+## Syscall Support Matrix (Current Stage)
 
-| Syscall | which | who | Current behavior |
-| --- | --- | --- | --- |
-| `setpriority` | `PRIO_PROCESS` | `0` or valid `pid` | supported (permission-checked) |
-| `setpriority` | `PRIO_PGRP` | any | `OperationNotPermitted` |
-| `setpriority` | `PRIO_USER` | any | `OperationNotPermitted` |
-| `getpriority` | `PRIO_PROCESS` | `0` or valid `pid` | supported (reads stored process nice) |
-| `getpriority` | `PRIO_PGRP` | any | `OperationNotPermitted` |
-| `getpriority` | `PRIO_USER` | any | `OperationNotPermitted` |
+Current strategy keeps scope semantics explicit and stable:
+
+- fully support `PRIO_PROCESS`
+- consistently reject `PRIO_PGRP`/`PRIO_USER` with `OperationNotPermitted` (`EPERM`)
+
+| Syscall | which | who | Result | errno |
+| --- | --- | --- | --- | --- |
+| `setpriority` | `PRIO_PROCESS` | `0` | set current process nice | `0` |
+| `setpriority` | `PRIO_PROCESS` | valid `pid` | set target process nice (permission checked) | `0` |
+| `setpriority` | `PRIO_PROCESS` | missing `pid` | reject target | `NoSuchProcess` (`ESRCH`) |
+| `setpriority` | `PRIO_PROCESS` | any | reject `prio` outside `[-20, 19]` | `InvalidInput` (`EINVAL`) |
+| `setpriority` | `PRIO_PGRP` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
+| `setpriority` | `PRIO_USER` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
+| `setpriority` | invalid `which` | any | invalid scope selector | `InvalidInput` (`EINVAL`) |
+| `getpriority` | `PRIO_PROCESS` | `0` | read current process nice | encoded value |
+| `getpriority` | `PRIO_PROCESS` | valid `pid` | read target process nice | encoded value |
+| `getpriority` | `PRIO_PROCESS` | missing `pid` | reject target | `NoSuchProcess` (`ESRCH`) |
+| `getpriority` | `PRIO_PGRP` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
+| `getpriority` | `PRIO_USER` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
+| `getpriority` | invalid `which` | any | invalid scope selector | `InvalidInput` (`EINVAL`) |
 
 ### getpriority Value Encoding
 
@@ -188,6 +200,7 @@ Current kernel path uses Linux-compatible encoding:
   - `nice = -20` -> `40`
   - `nice = 0` -> `20`
   - `nice = 19` -> `1`
+- boundary values are covered in `scripts/priority-syscall-smoke.sh`
 
 ### Syscall Smoke Script
 
@@ -196,6 +209,30 @@ Use `scripts/priority-syscall-smoke.sh` (run inside guest shell) to cover:
 - `PRIO_PROCESS` boundary values `-20/0/19`
 - invalid value rejection
 - missing pid rejection
+
+### Permission Regression Script (Issue 2)
+
+Use `scripts/priority-permission-regression.sh` (run inside guest shell as root) to validate:
+
+- self update: non-root process changes its own target priority
+- same uid update: non-root process changes another process with same uid
+- different uid update: non-root process changes process with different uid -> `OperationNotPermitted`
+- root override: root can change different-uid process priority
+
+The script auto-selects identity-switch backend in this order:
+
+1. `setpriv` (preferred)
+2. Python `os.setuid`
+3. `runuser` / `su` (needs uid->username mapping in `/etc/passwd`)
+
+Then it exercises `renice` end-to-end for all required permission classes.
+
+Optional backend pinning (for CI or reproducibility):
+
+- `BACKEND=auto` (default)
+- `BACKEND=setpriv`
+- `BACKEND=python`
+- `BACKEND=user-switch`
 
 ## Conclusion
 
@@ -210,7 +247,7 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
   - Only `PRIO_PROCESS` is supported.
   - `PRIO_PROCESS` supports current process (`who == 0`) and specified process (`who == pid`).
   - `PRIO_PROCESS` currently applies one process-wide nice to all its threads.
-  - Permission rule (phase-1): self process, same euid, or privileged user (`euid == 0`) can update.
+  - Permission rule (phase-2 staged model): self process, same uid, or privileged user (`euid == 0`) can update.
   - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
 - `getpriority` currently aligns with the same scope boundary:
   - `PRIO_PROCESS` returns the stored process nice (with `20 - nice` encoding).
@@ -222,8 +259,18 @@ to `nice=19` significantly improves foreground latency for `ls` in this setup.
 
 `EevdfClassScheduler` now exposes configurable observability controls:
 
-- `set_stats_config(enabled, window_ticks)` toggles periodic stats logs and sets report window size.
-- `stats()` returns cumulative counters.
-- `window_stats()` returns in-window counters.
+- scheduler-core API:
+  - `set_stats_config(enabled, window_ticks)` toggles periodic stats logs and sets report window size
+  - `stats()` returns cumulative counters
+  - `window_stats()` returns in-window counters
+- task-layer API (`axtask`, when `sched-eevdf-class` is enabled):
+  - `set_scheduler_stats_config(enabled, window_ticks)`
+  - `scheduler_stats()`
+  - `scheduler_window_stats()`
 
-Default behavior remains enabled with a 256-tick report window to preserve prior workflow.
+Default remains: stats enabled + window size `256`, so existing benchmark scripts keep working unchanged.
+
+Log output now contains both window and cumulative views in one line:
+
+- `window_*` fields reflect recent-share movement
+- `cumulative_*` fields provide long-horizon trend
