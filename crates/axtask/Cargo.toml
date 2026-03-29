@@ -53,6 +53,10 @@ sched-cfs = [
     "multitask",
     "preempt",
 ]
+sched-eevdf = [
+    "multitask",
+    "preempt",
+]
 sched-eevdf-class = [
     "multitask",
     "preempt",

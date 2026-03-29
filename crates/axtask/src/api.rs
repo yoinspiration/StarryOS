@@ -30,7 +30,11 @@ pub type WeakAxTaskRef = Weak<AxTask>;
 pub type AxCpuMask = cpumask::CpuMask<{ axconfig::plat::MAX_CPU_NUM }>;
 
 cfg_if::cfg_if! {
-    if #[cfg(feature = "sched-eevdf-class")] {
+    if #[cfg(feature = "sched-eevdf")] {
+        const MAX_TIME_SLICE: usize = 5;
+        pub(crate) type AxTask = axsched::EevdfEntity<TaskInner, MAX_TIME_SLICE>;
+        pub(crate) type Scheduler = axsched::EevdfScheduler<TaskInner, MAX_TIME_SLICE>;
+    } else if #[cfg(feature = "sched-eevdf-class")] {
         const MAX_TIME_SLICE: usize = 5;
         pub(crate) type AxTask = axsched::EevdfTask<TaskInner, MAX_TIME_SLICE>;
         pub(crate) type Scheduler = axsched::EevdfClassScheduler<TaskInner, MAX_TIME_SLICE>;
