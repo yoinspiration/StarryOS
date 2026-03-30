@@ -1,27 +1,58 @@
-# EEVDF Class + nice Benchmark Notes
+# EEVDF + nice Benchmark Notes
 
 ## Scope
 
-This note records a quick latency experiment for the EEVDF-class scheduler path in StarryOS,
-focused on whether `nice` (`setpriority`) can effectively reduce background CPU pressure on
-interactive commands.
+This document describes a **reproducible latency experiment** for StarryOS when using an
+EEVDF-based scheduler together with `nice` (`setpriority`): whether lowering background CPU
+priority reduces interference on a short foreground command (`ls`).
 
-## Environment
+Two scheduler variants exist in-tree:
 
-- Platform: `riscv64-qemu-virt`
-- Build profile: `release`
-- Scheduler feature: `sched-eevdf-class`
-- Load generator: `yes > /dev/null`
-- Foreground probe: `ls`
+| Feature | Scheduler | Default in `kernel/Cargo.toml`? |
+| --- | --- | --- |
+| `sched-eevdf` | Per-task EEVDF (`EevdfScheduler` / `EevdfEntity`) | **Yes** (current default) |
+| `sched-eevdf-class` | Class-weighted EEVDF (`EevdfClassScheduler`) | No (opt-in at build time) |
+
+The **guest workload and scripts below apply to both**; only **kernel log lines and optional
+stats APIs** differ (see [Scheduler observability](#scheduler-observability)).
+
+## Environment (repro checklist)
+
+- **Platform**: `riscv64-qemu-virt` (typical; adjust `ARCH` if you use another port).
+- **Build**: `release` kernel image used by `make run` / `make ci-test` (see repo `Makefile`).
+- **Scheduler**: Match your build:
+  - Default checkout: `sched-eevdf` (per-task EEVDF).
+  - For class-only sections: enable `sched-eevdf-class` in `kernel/Cargo.toml` (and disable
+    conflicting scheduler features) then rebuild.
+- **Load**: `4` background `yes` processes (override with `LOAD=…` in the regression script).
+
+### Host: build and run
+
+From the repository root:
+
+```sh
+make ARCH=riscv64 build    # or your target
+make ARCH=riscv64 run      # interactive; or: make ARCH=riscv64 ci-test
+```
+
+Ensure a rootfs/disk image is available per project docs (`make rootfs` if needed).
+
+### Host: unit tests (algorithm smoke, no QEMU)
+
+```sh
+cargo test -p axsched -- --nocapture
+```
+
+Validates `EevdfScheduler` / `EevdfClassScheduler` behavior in isolation on the host.
 
 ## Workload
 
-Two runs were executed with the same foreground probe count (`N=50`):
+Two scenarios with the same foreground sample count (`N`):
 
-1. **Base**: 4 background `yes` tasks with default priority.
-2. **nice19**: 4 background `yes` tasks started with `nice -n 19`.
+1. **base**: `LOAD` background `yes` tasks at default priority.
+2. **nice19**: same with `nice -n 19 yes`.
 
-Commands (inside StarryOS shell):
+Foreground probe (measures wall time of `ls` only; stderr of `time` holds the `%e` values):
 
 ```sh
 killall yes 2>/dev/null
@@ -36,51 +67,63 @@ for i in $(seq 1 50); do /usr/bin/time -f "%e" ls >/dev/null; done > /root/ls_ni
 killall yes 2>/dev/null
 ```
 
-## Regression Automation (Issue 5)
+### Regression automation
 
-Canonical script path in repo:
+Canonical script in the repo:
 
 - `scripts/bench-regression-eevdf.sh`
 
-Because host sharing (`9p`) is not available in the current kernel path, run a guest-local copy:
+Guest does not mount host `9p` in the current kernel path; copy the script into the guest and run locally:
 
 ```sh
-# after copying script content to guest local path:
+# Example: copy file content to /root/bench-regression-eevdf.sh on the guest, then:
 chmod +x /root/bench-regression-eevdf.sh
 
-# one command: run N=50 + N=200, base + nice19, emit table, compare baseline
+# Default: LOAD=4, runs N=50 and N=200 for base + nice19, writes TSV + markdown table
 /root/bench-regression-eevdf.sh
 
-# optional: refresh baseline after intentional tuning
+# Optional: more background tasks
+LOAD=6 /root/bench-regression-eevdf.sh
+
+# After intentional scheduler tuning, refresh stored baseline for compare mode
 BASELINE_MODE=refresh /root/bench-regression-eevdf.sh
 ```
 
-Generated artifacts (inside guest):
+Artifacts (inside guest):
 
-- `/root/bench-results/latest.tsv` (latest raw metrics)
-- `/root/bench-results/latest-table.md` (markdown result table)
-- `/root/bench-results/baseline.tsv` (comparison baseline)
-- `/root/bench-results/history.tsv` (timestamped archive)
+| Path | Contents |
+| --- | --- |
+| `/root/bench-results/latest.tsv` | Latest raw percentile summary |
+| `/root/bench-results/latest-table.md` | Markdown table (paste into this doc if desired) |
+| `/root/bench-results/baseline.tsv` | Comparison baseline for `BASELINE_MODE=check` |
+| `/root/bench-results/history.tsv` | Timestamped archive rows |
 
-Semi-automatic doc update workflow:
-
-1. Run `/root/bench-regression-eevdf.sh`
-2. Copy table content from `/root/bench-results/latest-table.md`
-3. Replace the "Stability Stress Results" table in this document
-
-Summary command:
+Quick percentile summary without the full script (same math as the script’s `calc_stats`):
 
 ```sh
 sort -n /root/ls_base.txt | awk '{a[++n]=$1} END{printf("base N=%d p50=%.3f p95=%.3f p99=%.3f max=%.3f\n", n, a[int((n-1)*0.50)+1], a[int((n-1)*0.95)+1], a[int((n-1)*0.99)+1], a[n])}'
 sort -n /root/ls_nice19.txt | awk '{a[++n]=$1} END{printf("nice19 N=%d p50=%.3f p95=%.3f p99=%.3f max=%.3f\n", n, a[int((n-1)*0.50)+1], a[int((n-1)*0.95)+1], a[int((n-1)*0.99)+1], a[n])}'
 ```
 
-## Observed Results
+### What to expect
+
+- **Absolute** times (seconds) depend on QEMU version, host load, `smp`, and disk image; do not
+  expect byte-identical numbers across machines.
+- **Relative** behavior: with a working nice→weight path, **nice19** should usually show **lower**
+  `p95` / `p99` / `max` for `ls` than **base** under heavy `yes` load. If both are similar, check
+  that background tasks actually run at different nice values (`getpriority` / `ps` if available).
+
+## Example observed results (historical)
+
+> The table below is a **sample** from an earlier run (EEVDF-class-focused era). Treat as
+> illustration only; **re-run the script on your machine** for current numbers.
+
+**Quick sample (N=50):**
 
 - `base N=50 p50=0.640 p95=0.840 p99=0.850 max=0.850`
 - `nice19 N=50 p50=0.050 p95=0.060 p99=0.070 max=0.080`
 
-## Stability Stress Results (N=200, `ls`)
+**Stability stress (N=200, `ls`):**
 
 | Scenario | N | p50 | p95 | p99 | max |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -89,20 +132,26 @@ sort -n /root/ls_nice19.txt | awk '{a[++n]=$1} END{printf("nice19 N=%d p50=%.3f 
 | base | 200 | 0.630 | 0.630 | 0.850 | 0.860 |
 | nice19 | 200 | 0.050 | 0.060 | 0.060 | 0.060 |
 
-Compared with `base`, the `nice19` run keeps a clear latency advantage at tail metrics
-(`p95/p99/max`) at both sample sizes, and no regression is observed in this baseline run.
+## Scheduler observability
 
-## Scheduler Stats Observability
+### Per-task EEVDF (`sched-eevdf`, default)
 
-The EEVDF-class scheduler exports class-level stats through `info` logs:
+- There are **no** `eevdf-class stats: …` log lines; class share ratios do not apply.
+- `axtask` APIs `set_scheduler_stats_config` / `scheduler_stats` / `scheduler_window_stats` are
+  **not** compiled in (they are gated on `sched-eevdf-class`).
+- Validation is primarily: **host** `cargo test -p axsched`, plus **guest** behavior under load
+  (this benchmark).
+
+### EEVDF-class (`sched-eevdf-class`, optional build)
+
+When enabled, the class scheduler exports stats via `info` logs, for example:
 
 - `eevdf-class stats: picks=[...,...,...] ticks=[...,...,...] share(i/n/b)=.../.../...`
 
-`share(i/n/b)` is computed in a fixed recent window (`STATS_LOG_INTERVAL_TICKS = 256`) and
-reset after each emission. This makes the share reflect current scheduling behavior rather than
-long-lived boot-time accumulation.
+`share(i/n/b)` uses a fixed recent window (`STATS_LOG_INTERVAL_TICKS = 256`) and resets after each
+emission so the share reflects current behavior rather than lifetime totals.
 
-Quick load recipe to observe class share changes in StarryOS shell:
+Example shell recipe to **perturb** class shares (interactive tier may require negative nice support):
 
 ```sh
 killall yes 2>/dev/null
@@ -120,157 +169,83 @@ sleep 10
 killall yes 2>/dev/null
 ```
 
-If negative nice is not supported in your environment, skip the interactive block and run a
-two-class comparison (`normal` + `background`) first.
+#### Class share validation (window stats, optional)
 
-## Class Share Validation (Window Stats)
+With `LOG=info` and `sched-eevdf-class`, a three-stage run can be used to compare measured window
+shares to nominal class weights (`interactive:normal:background = 8:4:1`):
 
-A follow-up run was executed with window-based scheduler stats enabled (`LOG=info`):
+1. `background` only (`nice -n 19 yes` ×2)
+2. `background` + `normal` (+ default `yes` ×2)
+3. `background` + `normal` + `interactive` (+ `nice -n -10 yes` ×2)
 
-1. `background` only (`nice -n 19 yes` x2)
-2. `background` + `normal` (plus default `yes` x2)
-3. `background` + `normal` + `interactive` (plus `nice -n -10 yes` x2)
+Example historical observation:
 
-Observed window-share evolution:
+- Background only: `share(i/n/b)` ≈ `0% / 0% / 100%`
+- Background + Normal: ≈ `0% / 80% / 20%`
+- All three: ≈ `61% / 31% / 8%` (close to `8:4:1` theoretical split)
 
-- Background only: `share(i/n/b)` converged to about `0% / 0% / 100%`
-- Background + Normal: `share(i/n/b)` moved to about `0% / 80% / 20%`
-- Background + Normal + Interactive: `share(i/n/b)` stabilized around `61% / 31% / 8%`
+### EEVDF-class stats APIs (only with `sched-eevdf-class`)
 
-With class weights `interactive:normal:background = 8:4:1`, the theoretical split is:
+- Scheduler core: `set_stats_config(enabled, window_ticks)`, `stats()`, `window_stats()`.
+- Task layer (`axtask`): `set_scheduler_stats_config`, `scheduler_stats`, `scheduler_window_stats`.
 
-- interactive: `8 / (8+4+1) = 61.5%`
-- normal: `4 / (8+4+1) = 30.8%`
-- background: `1 / (8+4+1) = 7.7%`
+Default when the feature is enabled: stats on, window `256` ticks.
 
-The measured values closely match the expected ratio, which validates that class-level accounting
-and weighted dispatch behavior are working as intended.
+Log lines may include both window and cumulative fields (`window_*` vs `cumulative_*`).
 
-## PRIO_PROCESS (non-current pid) Validation
+## PRIO_PROCESS (non-current pid) validation
 
-A functional validation was run for `setpriority/getpriority` behavior on non-current processes:
+Functional checks for `setpriority` / `getpriority` on arbitrary processes:
 
-1. Spawn two background processes and capture pids (`pid1`, `pid2`)
-2. Apply `renice -n 19 $pid1` and `renice -n -10 $pid2` (non-current targets)
-3. Validate error handling with:
-   - invalid nice value: `renice -n 40 $pidx`
-   - non-existing process: `renice -n 5 999999`
+1. Spawn two background processes; note `pid1`, `pid2`.
+2. `renice -n 19 $pid1` and `renice -n -10 $pid2` (non-current targets).
+3. Error paths: invalid nice `renice -n 40 $pidx`; missing pid `renice -n 5 999999`.
 
-Observed results:
+Expected: valid updates succeed; invalid nice → `setpriority: Invalid argument`; missing pid →
+`getpriority: No such process` (wording may vary slightly).
 
-- Non-current target updates succeeded for valid values.
-- Invalid priority was rejected with `setpriority: Invalid argument`.
-- Missing target was rejected with `getpriority: No such process`.
-- Follow-up valid update (`renice -n 5 $pidx`) succeeded.
+## Syscall support matrix (current stage)
 
-Conclusion:
+Scope is kept explicit:
 
-- Minimal `PRIO_PROCESS` support for specified pid is functional.
-- Basic error-path semantics for invalid input and missing process are preserved.
-
-## Syscall Support Matrix (Current Stage)
-
-Current strategy keeps scope semantics explicit and stable:
-
-- fully support `PRIO_PROCESS`
-- consistently reject `PRIO_PGRP`/`PRIO_USER` with `OperationNotPermitted` (`EPERM`)
+- **Supported**: `PRIO_PROCESS` (current pid `0` or explicit pid, with permission rules).
+- **Rejected**: `PRIO_PGRP` / `PRIO_USER` → `OperationNotPermitted` (`EPERM`).
 
 | Syscall | which | who | Result | errno |
 | --- | --- | --- | --- | --- |
 | `setpriority` | `PRIO_PROCESS` | `0` | set current process nice | `0` |
-| `setpriority` | `PRIO_PROCESS` | valid `pid` | set target process nice (permission checked) | `0` |
-| `setpriority` | `PRIO_PROCESS` | missing `pid` | reject target | `NoSuchProcess` (`ESRCH`) |
-| `setpriority` | `PRIO_PROCESS` | any | reject `prio` outside `[-20, 19]` | `InvalidInput` (`EINVAL`) |
-| `setpriority` | `PRIO_PGRP` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
-| `setpriority` | `PRIO_USER` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
-| `setpriority` | invalid `which` | any | invalid scope selector | `InvalidInput` (`EINVAL`) |
-| `getpriority` | `PRIO_PROCESS` | `0` | read current process nice | encoded value |
-| `getpriority` | `PRIO_PROCESS` | valid `pid` | read target process nice | encoded value |
-| `getpriority` | `PRIO_PROCESS` | missing `pid` | reject target | `NoSuchProcess` (`ESRCH`) |
-| `getpriority` | `PRIO_PGRP` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
-| `getpriority` | `PRIO_USER` | any | not supported in current stage | `OperationNotPermitted` (`EPERM`) |
-| `getpriority` | invalid `which` | any | invalid scope selector | `InvalidInput` (`EINVAL`) |
+| `setpriority` | `PRIO_PROCESS` | valid `pid` | set target (permission checked) | `0` |
+| `setpriority` | `PRIO_PROCESS` | missing `pid` | reject | `NoSuchProcess` (`ESRCH`) |
+| `setpriority` | `PRIO_PROCESS` | any | `prio` not in `[-20, 19]` | `InvalidInput` (`EINVAL`) |
+| `setpriority` | `PRIO_PGRP` / `PRIO_USER` | any | not supported | `EPERM` |
+| `setpriority` | invalid `which` | any | invalid selector | `EINVAL` |
+| `getpriority` | `PRIO_PROCESS` | `0` / valid `pid` | read nice (encoded) | value |
+| `getpriority` | `PRIO_PROCESS` | missing `pid` | reject | `ESRCH` |
+| `getpriority` | `PRIO_PGRP` / `PRIO_USER` | any | not supported | `EPERM` |
+| `getpriority` | invalid `which` | any | invalid selector | `EINVAL` |
 
-### getpriority Value Encoding
+### getpriority encoding (Linux-compatible)
 
-Current kernel path uses Linux-compatible encoding:
+- Returned value = `20 - nice` (e.g. nice `-20` → `40`, nice `0` → `20`, nice `19` → `1`).
+- Boundary coverage: `scripts/priority-syscall-smoke.sh` (guest).
 
-- returned value = `20 - nice`
-- mapping examples:
-  - `nice = -20` -> `40`
-  - `nice = 0` -> `20`
-  - `nice = 19` -> `1`
-- boundary values are covered in `scripts/priority-syscall-smoke.sh`
+### Other scripts (guest)
 
-### Syscall Smoke Script
-
-Use `scripts/priority-syscall-smoke.sh` (run inside guest shell) to cover:
-
-- `PRIO_PROCESS` boundary values `-20/0/19`
-- invalid value rejection
-- missing pid rejection
-
-### Permission Regression Script (Issue 2)
-
-Use `scripts/priority-permission-regression.sh` (run inside guest shell as root) to validate:
-
-- self update: non-root process changes its own target priority
-- same uid update: non-root process changes another process with same uid
-- different uid update: non-root process changes process with different uid -> `OperationNotPermitted`
-- root override: root can change different-uid process priority
-
-The script auto-selects identity-switch backend in this order:
-
-1. `setpriv` (preferred)
-2. Python `os.setuid`
-3. `runuser` / `su` (needs uid->username mapping in `/etc/passwd`)
-
-Then it exercises `renice` end-to-end for all required permission classes.
-
-Optional backend pinning (for CI or reproducibility):
-
-- `BACKEND=auto` (default)
-- `BACKEND=setpriv`
-- `BACKEND=python`
-- `BACKEND=user-switch`
+- `scripts/priority-syscall-smoke.sh` — boundary nice values and error paths.
+- `scripts/priority-permission-regression.sh` — self / same-uid / cross-uid / root (see script for
+  backends: `setpriv`, Python, `runuser`/`su`).
 
 ## Conclusion
 
-`nice` is effective with the current EEVDF-class integration. Lowering background task priority
-to `nice=19` significantly improves foreground latency for `ls` in this setup.
+- **`nice` is expected to matter** for foreground latency under CPU-heavy background load whenever
+  priority maps into the active scheduler’s weights (per-task EEVDF and EEVDF-class both use
+  nice-derived weights in-tree).
+- Use **`scripts/bench-regression-eevdf.sh`** for repeatable before/after tables; refresh
+  **baseline** only when behavior changes intentionally.
 
-## Current Limitations
+## Current limitations
 
-- Host directory sharing via `mount -t 9p` is not supported in the current kernel path.
-  Use guest-local paths (for example `/root/bench-eevdf-nice.sh`) for benchmark automation.
-- `setpriority` support is intentionally minimal:
-  - Only `PRIO_PROCESS` is supported.
-  - `PRIO_PROCESS` supports current process (`who == 0`) and specified process (`who == pid`).
-  - `PRIO_PROCESS` currently applies one process-wide nice to all its threads.
-  - Permission rule (phase-2 staged model): self process, same uid, or privileged user (`euid == 0`) can update.
-  - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
-- `getpriority` currently aligns with the same scope boundary:
-  - `PRIO_PROCESS` returns the stored process nice (with `20 - nice` encoding).
-  - `PRIO_PGRP` and `PRIO_USER` return `OperationNotPermitted`.
-- This benchmark is single-machine and short-run (`N=50`); larger samples and additional workloads
-  are recommended for publication-grade claims.
-
-## Scheduler Stats Productization Notes
-
-`EevdfClassScheduler` now exposes configurable observability controls:
-
-- scheduler-core API:
-  - `set_stats_config(enabled, window_ticks)` toggles periodic stats logs and sets report window size
-  - `stats()` returns cumulative counters
-  - `window_stats()` returns in-window counters
-- task-layer API (`axtask`, when `sched-eevdf-class` is enabled):
-  - `set_scheduler_stats_config(enabled, window_ticks)`
-  - `scheduler_stats()`
-  - `scheduler_window_stats()`
-
-Default remains: stats enabled + window size `256`, so existing benchmark scripts keep working unchanged.
-
-Log output now contains both window and cumulative views in one line:
-
-- `window_*` fields reflect recent-share movement
-- `cumulative_*` fields provide long-horizon trend
+- No host `9p` share: keep benchmark scripts and outputs under **guest** paths (e.g. `/root/…`).
+- `setpriority` is intentionally minimal (`PRIO_PROCESS` only; `PRIO_PGRP`/`PRIO_USER` → `EPERM`).
+- One process-wide nice for all threads of a process in the current model.
+- Short runs and one workload (`ls`); not publication-grade without more samples and machines.
