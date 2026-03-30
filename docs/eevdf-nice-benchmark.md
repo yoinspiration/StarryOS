@@ -6,6 +6,9 @@ This document describes a **reproducible latency experiment** for StarryOS when 
 EEVDF-based scheduler together with `nice` (`setpriority`): whether lowering background CPU
 priority reduces interference on a short foreground command (`ls`).
 
+Informal introduction to EEVDF concepts (vruntime, eligibility, deadlines; Chinese):
+[`eevdf-concept.md`](./eevdf-concept.md).
+
 Two scheduler variants exist in-tree:
 
 | Feature | Scheduler | Default in `kernel/Cargo.toml`? |

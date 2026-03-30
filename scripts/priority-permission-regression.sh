@@ -32,16 +32,12 @@ setpriv_supports_uid_switch() {
     if ! command -v setpriv >/dev/null 2>&1; then
         return 1
     fi
-    # BusyBox setpriv may exist but not support --reuid/--regid.
-    help_text="$(setpriv --help 2>&1 || true)"
-    case "$help_text" in
-        *--reuid*--regid*|*--regid*--reuid*)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    # BusyBox ships a minimal setpriv without --reuid/--regid; help text checks
+    # can false-positive. Require a successful dry-run (util-linux behavior).
+    if setpriv --reuid 0 --regid 0 true 2>/dev/null; then
+        return 0
+    fi
+    return 1
 }
 
 select_backend() {
