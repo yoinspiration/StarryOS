@@ -50,6 +50,8 @@ EEVDF（Earliest Eligible Virtual Deadline First）可从三个关键词理解�
 - `eligible`：相对系统公平水位 `V`，满足 `vruntime <= V` 的任务属于“有资格”候选；
 - `deadline`：在有资格任务中，优先选择虚拟截止时间更早者。
 
+当前实现中，`V` 取就绪队列 `vruntime` 的按权重平均值，这与 `nice -> weight` 的公平目标保持一致，也使 eligible 判定具备稳定、可解释的中心水位。
+
 当暂时没有任务满足 `eligible` 时，调度器采用兜底规则（直接取最早 deadline）保证系统持续推进。
 
 ### 3.3 per-task EEVDF 
@@ -122,6 +124,20 @@ killall yes 2>/dev/null
 
 该现象说明了 `nice -> 权重 -> 调度行为` 的作用链路是有效的。
 
+### 6.3 可选深化结果（SMP=2 + 第二工作负载）
+
+在 `smp=2` 下完成了两组补充验证：
+
+1. `yes + ls` 回归脚本可在双核下稳定运行，且 `nice19` 相比 `base` 继续保持更优 `p95/p99/max`。
+2. 第二工作负载选用 `sha256sum /bin/busybox`（`N=50`）做 base/nice19 对比，结果如下：
+
+| Scenario | N | p50 | p95 | p99 | max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| base | 50 | 0.390 | 0.390 | 0.400 | 0.400 |
+| nice19 | 50 | 0.080 | 0.120 | 0.120 | 0.120 |
+
+该结果说明：即使在双核与更重探针下，降低后台 nice 仍可显著改善前台 tail latency，结论不局限于单核 `ls` 场景。
+
 ## 7. 验证与测试
 
 ### 7.1 EEVDF 语义单元测试（host）
@@ -154,7 +170,7 @@ cargo test -p axsched eevdf_tests -- --nocapture
 
 - **教学实现定位**：当前 per-task EEVDF 以“可解释、可验证、可演示”为主要目标，属于课程/实验导向实现，并非以完整复刻 Linux 生产调度器为目标。
 - **与 Linux 主线差距**：已实现核心语义（`vruntime`、`eligible`、`deadline` 与抢占），但在工程化程度、可观测性与复杂场景覆盖方面，仍与 Linux 主线实现存在差距。
-- **测试边界（单核为主）**：本次主要结果来自 `riscv64-qemu-virt` 单核条件下的 `yes + ls` 压力实验；虽有单元测试和可启动性验证，但尚未形成系统化 SMP 压测结论。
+- **测试边界（单核为主）**：当前主结论仍以单核 `yes + ls` 为主，虽已补充 `smp=2` 与第二工作负载样本，但规模仍有限，尚不足以替代系统化多核压测。
 
 ## 9. 后续工作
 
@@ -162,6 +178,24 @@ cargo test -p axsched eevdf_tests -- --nocapture
 - 扩展 workload（不仅 `yes`/`ls`）；
 - 增加更系统化的统计输出与长期基准；
 - 在同等条件下对比其他调度策略，量化 tail latency 差异。
+
+### 9.1 可直接执行的可选深化
+
+1. **SMP=2 对比（base / nice19）**
+
+   - host 侧使用双核启动（示例）：
+     - `make ARCH=riscv64 SMP=2 run`
+   - guest 侧执行现有回归脚本：
+     - `sh /root/bench-regression-eevdf.sh`
+   - 将结果与单核基线（同脚本输出）对比，观察 `p95/p99/max` 是否仍保持 `nice19` 优势。
+
+2. **第二工作负载（除 `yes+ls` 外）**
+
+   脚本已支持探针参数：`PROBE_NAME` + `PROBE_CMD`。例如使用 BusyBox 哈希任务作为前台探针：
+
+   - `PROBE_NAME=busybox_sha256 PROBE_CMD='sha256sum /bin/busybox >/dev/null' sh /root/bench-regression-eevdf.sh`
+
+   输出会生成独立文件（例如 `busybox_sha256-latest.tsv`），可与 `ls` 探针结果并列放入报告，提升结论说服力。
 
 ## 10. 结论
 

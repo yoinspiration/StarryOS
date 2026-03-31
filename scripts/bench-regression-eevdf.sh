@@ -6,15 +6,18 @@
 # Optional:
 #   LOAD=6 sh /root/bench-regression-eevdf.sh
 #   BASELINE_MODE=refresh sh /root/bench-regression-eevdf.sh
+#   PROBE_NAME=busybox_sha256 PROBE_CMD='sha256sum /bin/busybox >/dev/null' sh /root/bench-regression-eevdf.sh
 
 set -eu
 
 LOAD="${LOAD:-4}"
 RESULT_DIR="${RESULT_DIR:-/root/bench-results}"
-BASELINE_FILE="${RESULT_DIR}/baseline.tsv"
-LATEST_FILE="${RESULT_DIR}/latest.tsv"
-TABLE_FILE="${RESULT_DIR}/latest-table.md"
-ARCHIVE_FILE="${RESULT_DIR}/history.tsv"
+PROBE_NAME="${PROBE_NAME:-ls}"
+PROBE_CMD="${PROBE_CMD:-ls >/dev/null}"
+BASELINE_FILE="${RESULT_DIR}/${PROBE_NAME}-baseline.tsv"
+LATEST_FILE="${RESULT_DIR}/${PROBE_NAME}-latest.tsv"
+TABLE_FILE="${RESULT_DIR}/${PROBE_NAME}-latest-table.md"
+ARCHIVE_FILE="${RESULT_DIR}/${PROBE_NAME}-history.tsv"
 BASELINE_MODE="${BASELINE_MODE:-check}" # check | refresh
 
 mkdir -p "${RESULT_DIR}"
@@ -22,7 +25,7 @@ mkdir -p "${RESULT_DIR}"
 run_case() {
     label="$1"   # base | nice19
     samples="$2" # 50 | 200
-    out_file="${RESULT_DIR}/ls_${label}_${samples}.txt"
+    out_file="${RESULT_DIR}/${PROBE_NAME}_${label}_${samples}.txt"
 
     killall yes 2>/dev/null || true
 
@@ -39,7 +42,7 @@ run_case() {
     sleep 1
     i=1
     while [ "$i" -le "$samples" ]; do
-        /usr/bin/time -f "%e" ls >/dev/null
+        /usr/bin/time -f "%e" sh -c "${PROBE_CMD}"
         i=$((i + 1))
     done > "${out_file}" 2>&1
 
@@ -49,7 +52,7 @@ run_case() {
 calc_stats() {
     label="$1"
     samples="$2"
-    file="${RESULT_DIR}/ls_${label}_${samples}.txt"
+    file="${RESULT_DIR}/${PROBE_NAME}_${label}_${samples}.txt"
 
     sort -n "${file}" | awk -v scenario="${label}" -v n_expect="${samples}" '
         { a[++n] = $1 }
@@ -97,7 +100,8 @@ compare_baseline() {
     done < "${LATEST_FILE}"
 }
 
-echo "[bench] running base/nice19 regression (N=50,200; load=${LOAD})"
+echo "[bench] running base/nice19 regression (probe=${PROBE_NAME}; N=50,200; load=${LOAD})"
+echo "[bench] probe cmd: ${PROBE_CMD}"
 
 run_case base 50
 run_case nice19 50

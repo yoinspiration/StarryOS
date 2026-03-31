@@ -88,6 +88,9 @@ chmod +x /root/bench-regression-eevdf.sh
 # Optional: more background tasks
 LOAD=6 /root/bench-regression-eevdf.sh
 
+# Optional: run a second foreground probe (separate result files by probe name)
+PROBE_NAME=busybox_sha256 PROBE_CMD='sha256sum /bin/busybox >/dev/null' /root/bench-regression-eevdf.sh
+
 # After intentional scheduler tuning, refresh stored baseline for compare mode
 BASELINE_MODE=refresh /root/bench-regression-eevdf.sh
 ```
@@ -96,10 +99,12 @@ Artifacts (inside guest):
 
 | Path | Contents |
 | --- | --- |
-| `/root/bench-results/latest.tsv` | Latest raw percentile summary |
-| `/root/bench-results/latest-table.md` | Markdown table (paste into this doc if desired) |
-| `/root/bench-results/baseline.tsv` | Comparison baseline for `BASELINE_MODE=check` |
-| `/root/bench-results/history.tsv` | Timestamped archive rows |
+| `/root/bench-results/<probe>-latest.tsv` | Latest raw percentile summary |
+| `/root/bench-results/<probe>-latest-table.md` | Markdown table (paste into this doc if desired) |
+| `/root/bench-results/<probe>-baseline.tsv` | Comparison baseline for `BASELINE_MODE=check` |
+| `/root/bench-results/<probe>-history.tsv` | Timestamped archive rows |
+
+`<probe>` defaults to `ls` and can be overridden by `PROBE_NAME`.
 
 Quick percentile summary without the full script (same math as the script’s `calc_stats`):
 
