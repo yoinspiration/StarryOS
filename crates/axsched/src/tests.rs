@@ -235,6 +235,49 @@ mod eevdf_tests {
         assert_eq!(stats.picks_total, 1);
         assert_eq!(stats.fallback_no_eligible, 1);
     }
+
+    #[test]
+    fn stats_disabled_does_not_count() {
+        let mut sched = EevdfScheduler::<usize, 5>::new();
+        // Keep default: stats disabled.
+        let t1 = Arc::new(EevdfEntity::<usize, 5>::new(1));
+        let t2 = Arc::new(EevdfEntity::<usize, 5>::new(2));
+        sched.add_task(t1.clone());
+        sched.add_task(t2.clone());
+
+        let running = sched.pick_next_task().unwrap();
+        let _ = sched.task_tick(&running);
+        sched.put_prev_task(running, false);
+        let _ = sched.pick_next_task().unwrap();
+
+        let stats = sched.stats();
+        assert_eq!(stats.picks_total, 0);
+        assert_eq!(stats.preempt_by_deadline, 0);
+        assert_eq!(stats.slice_expired, 0);
+        assert_eq!(stats.fallback_no_eligible, 0);
+    }
+
+    #[test]
+    fn stats_reset_clears_counters() {
+        let mut sched = EevdfScheduler::<usize, 5>::new();
+        sched.set_stats_enabled(true);
+        let t1 = Arc::new(EevdfEntity::<usize, 5>::new(1));
+        sched.add_task(t1.clone());
+        let running = sched.pick_next_task().unwrap();
+        // Consume full slice so we have non-zero stats.
+        for _ in 0..5 {
+            let _ = sched.task_tick(&running);
+        }
+
+        let before = sched.stats();
+        assert!(before.picks_total > 0 || before.slice_expired > 0);
+        sched.reset_stats();
+        let after = sched.stats();
+        assert_eq!(after.picks_total, 0);
+        assert_eq!(after.preempt_by_deadline, 0);
+        assert_eq!(after.slice_expired, 0);
+        assert_eq!(after.fallback_no_eligible, 0);
+    }
 }
 
 mod eevdf_priority {

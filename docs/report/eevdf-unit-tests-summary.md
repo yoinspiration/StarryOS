@@ -6,7 +6,7 @@
 cargo test -p axsched eevdf_tests -- --nocapture
 ```
 
-若 **9 个测试全部通过**，说明当前 `eevdf_tests` 模块里与 **EEVDF 语义**相关的用例在你环境中均成立。
+若 **11 个测试全部通过**，说明当前 `eevdf_tests` 模块里与 **EEVDF 语义**相关的用例在你环境中均成立。
 
 ## 测试与含义（汇报时可一测一行）
 
@@ -21,6 +21,8 @@ cargo test -p axsched eevdf_tests -- --nocapture
 | `stats_count_deadline_preemption_and_pick` | 统计 `picks_total` 与 `preempt_by_deadline` 计数正确 |
 | `stats_count_slice_expired` | 时间片耗尽时 `slice_expired` 计数递增 |
 | `stats_count_fallback_no_eligible` | 验证兜底路径的 `fallback_no_eligible` 计数逻辑 |
+| `stats_disabled_does_not_count` | 统计关闭时计数保持为 0，不产生误统计 |
+| `stats_reset_clears_counters` | `reset_stats()` 可将全部计数清零 |
 
 ## 新增轻量统计能力（汇报加分项）
 
