@@ -226,6 +226,13 @@ SMP=2 补充观测（`make run LOG=info FEATURES=eevdf-stats-demo SMP=2`）显�
 
 该结果说明在持续负载阶段两核窗口级调度活跃度均显著上升，且两核活动总量接近；同时 `sum_delta_fallback=0` 继续符合当前实现的常见运行行为预期。
 
+进一步地，在带 marker 的日志（示例：`bench-results/serial-manual-*.log`，经 `tr -d '\r'` 清洗）上做 case 级聚合，得到每个 case 在每个 CPU 上均为 `windows=3`、`nonzero_windows=3`，说明分段对齐有效。按两核合并后：
+
+- `n50`：`base` 为 `sum_delta_picks=358`、`sum_delta_slice=273`；`nice19` 为 `sum_delta_picks=386`、`sum_delta_slice=293`（`nice19` 略高）
+- `n200`：`base` 为 `sum_delta_picks=384`、`sum_delta_slice=291`；`nice19` 为 `sum_delta_picks=387`、`sum_delta_slice=290`（两组接近）
+
+同时，全局统计保持双核均衡（`cpu0: picks=815, slice=601`；`cpu1: picks=829, slice=607`，两核 `sum_delta_preempt=0`）。该结果表明：在本轮合成负载下，`base` 与 `nice19` 在 case 级别未出现跨核失衡或异常抢占，且 marker 分段解析可稳定复用到后续对比实验。
+
 ## 8. 已知局限
 
 为避免结论外推过度，本报告明确以下边界条件：
