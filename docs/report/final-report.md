@@ -132,7 +132,7 @@ killall yes 2>/dev/null
 cargo test -p axsched eevdf_tests -- --nocapture
 ```
 
-结果：6/6 通过。
+结果：9/9 通过。
 
 覆盖点包括：
 
@@ -140,7 +140,9 @@ cargo test -p axsched eevdf_tests -- --nocapture
 - eligible 约束下的任务选择；
 - deadline 驱动抢占触发；
 - 抢占后 deadline 保留语义；
-- 运行中优先级更新与非法 nice 拒绝。
+- 运行中优先级更新与非法 nice 拒绝；
+- 轻量统计接口计数：`picks_total`、`preempt_by_deadline`、`slice_expired`；
+- 兜底分支计数：`fallback_no_eligible`（测试态强制覆盖）。
 
 ### 7.2 系统级可运行性
 

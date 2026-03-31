@@ -110,6 +110,14 @@ impl<T, const S: usize> Deref for EevdfEntity<T, S> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EevdfStats {
+    pub picks_total: u64,
+    pub preempt_by_deadline: u64,
+    pub fallback_no_eligible: u64,
+    pub slice_expired: u64,
+}
+
 /// Per-task EEVDF (Earliest Eligible Virtual Deadline First) scheduler.
 ///
 /// Each task carries its own virtual runtime (`vruntime`) and virtual
@@ -133,6 +141,10 @@ pub struct EevdfScheduler<T, const MAX_TIME_SLICE: usize> {
     total_weighted_vrt: i128,
     total_weight: i128,
     id_pool: isize,
+    stats_enabled: bool,
+    stats: EevdfStats,
+    #[cfg(test)]
+    debug_force_no_eligible: bool,
 }
 
 impl<T, const S: usize> EevdfScheduler<T, S> {
@@ -144,11 +156,43 @@ impl<T, const S: usize> EevdfScheduler<T, S> {
             total_weighted_vrt: 0,
             total_weight: 0,
             id_pool: 0,
+            stats_enabled: false,
+            stats: EevdfStats {
+                picks_total: 0,
+                preempt_by_deadline: 0,
+                fallback_no_eligible: 0,
+                slice_expired: 0,
+            },
+            #[cfg(test)]
+            debug_force_no_eligible: false,
         }
     }
 
     pub fn scheduler_name() -> &'static str {
         "EEVDF"
+    }
+
+    pub fn set_stats_enabled(&mut self, enabled: bool) {
+        self.stats_enabled = enabled;
+    }
+
+    pub fn stats(&self) -> EevdfStats {
+        self.stats
+    }
+
+    pub fn reset_stats(&mut self) {
+        self.stats = EevdfStats::default();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_debug_force_no_eligible(&mut self, enabled: bool) {
+        self.debug_force_no_eligible = enabled;
+    }
+
+    fn stat_inc(counter: &mut u64, enabled: bool) {
+        if enabled {
+            *counter = counter.saturating_add(1);
+        }
     }
 
     fn next_id(&mut self) -> isize {
@@ -238,15 +282,27 @@ impl<T, const S: usize> BaseScheduler for EevdfScheduler<T, S> {
         }
 
         let v = self.avg_vruntime();
+        let mut used_fallback = false;
 
         // Primary: earliest deadline among eligible tasks (vruntime ≤ V).
         let key = self
             .ready_queue
             .iter()
             .find(|(_, t)| t.vruntime() <= v)
-            .map(|(k, _)| *k)
-            // Fallback: earliest deadline unconditionally.
-            .or_else(|| self.ready_queue.keys().next().copied())?;
+            .map(|(k, _)| *k);
+
+        #[cfg(test)]
+        let key = if self.debug_force_no_eligible { None } else { key };
+
+        if key.is_none() {
+            used_fallback = true;
+        }
+        // Fallback: earliest deadline unconditionally.
+        let key = key.or_else(|| self.ready_queue.keys().next().copied())?;
+        Self::stat_inc(&mut self.stats.picks_total, self.stats_enabled);
+        if used_fallback {
+            Self::stat_inc(&mut self.stats.fallback_no_eligible, self.stats_enabled);
+        }
 
         self.dequeue_by_key(key)
     }
@@ -275,6 +331,7 @@ impl<T, const S: usize> BaseScheduler for EevdfScheduler<T, S> {
 
         let old_slice = current.slice.fetch_sub(1, Ordering::Release);
         if old_slice <= 1 {
+            Self::stat_inc(&mut self.stats.slice_expired, self.stats_enabled);
             return true;
         }
 
@@ -283,6 +340,7 @@ impl<T, const S: usize> BaseScheduler for EevdfScheduler<T, S> {
         if let Some((_, head)) = self.ready_queue.iter().next() {
             let v = self.avg_vruntime_with(current);
             if head.vruntime() <= v && head.deadline() < current.deadline() {
+                Self::stat_inc(&mut self.stats.preempt_by_deadline, self.stats_enabled);
                 return true;
             }
         }

@@ -6,7 +6,7 @@
 cargo test -p axsched eevdf_tests -- --nocapture
 ```
 
-若 **6 个测试全部通过**，说明当前 `eevdf_tests` 模块里与 **EEVDF 语义**相关的用例在你环境中均成立。
+若 **9 个测试全部通过**，说明当前 `eevdf_tests` 模块里与 **EEVDF 语义**相关的用例在你环境中均成立。
 
 ## 测试与含义（汇报时可一测一行）
 
@@ -18,6 +18,24 @@ cargo test -p axsched eevdf_tests -- --nocapture
 | `preempted_task_keeps_deadline` | 被抢占且 slice 未耗尽时 **deadline 保留** |
 | `set_priority_on_running_task` | 运行中任务仍可 **改 nice** 并保持调度器一致 |
 | `set_priority_rejects_out_of_range` | **非法 nice** 被拒绝 |
+| `stats_count_deadline_preemption_and_pick` | 统计 `picks_total` 与 `preempt_by_deadline` 计数正确 |
+| `stats_count_slice_expired` | 时间片耗尽时 `slice_expired` 计数递增 |
+| `stats_count_fallback_no_eligible` | 验证兜底路径的 `fallback_no_eligible` 计数逻辑 |
+
+## 新增轻量统计能力（汇报加分项）
+
+当前 per-task EEVDF 已提供可开关统计（默认关闭）：
+
+- 开关：`set_stats_enabled(bool)`
+- 读取：`stats()`
+- 清零：`reset_stats()`
+- 计数字段：
+  - `picks_total`
+  - `preempt_by_deadline`
+  - `fallback_no_eligible`
+  - `slice_expired`
+
+其中，`fallback_no_eligible` 在当前 `V` 定义（就绪队列 `vruntime` 加权平均）下正常运行时几乎不可达，因此测试使用了仅测试态的 debug 强制开关来覆盖该分支。这一做法不影响正式构建行为。
 
 ## 关于 `filtered out`
 

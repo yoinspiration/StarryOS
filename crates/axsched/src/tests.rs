@@ -186,6 +186,55 @@ mod eevdf_tests {
         let should_preempt = sched.task_tick(&running);
         assert!(should_preempt);
     }
+
+    #[test]
+    fn stats_count_deadline_preemption_and_pick() {
+        let mut sched = EevdfScheduler::<usize, 5>::new();
+        sched.set_stats_enabled(true);
+        let t1 = Arc::new(EevdfEntity::<usize, 5>::new(1));
+        sched.add_task(t1.clone());
+
+        let running = sched.pick_next_task().unwrap();
+        assert_eq!(sched.stats().picks_total, 1);
+        assert!(!sched.task_tick(&running));
+
+        let t2 = Arc::new(EevdfEntity::<usize, 5>::new(2));
+        sched.add_task(t2.clone());
+        sched.set_priority(&t2, -20);
+        assert!(sched.task_tick(&running));
+        assert_eq!(sched.stats().preempt_by_deadline, 1);
+    }
+
+    #[test]
+    fn stats_count_slice_expired() {
+        let mut sched = EevdfScheduler::<usize, 5>::new();
+        sched.set_stats_enabled(true);
+        let t = Arc::new(EevdfEntity::<usize, 5>::new(1));
+        sched.add_task(t);
+        let running = sched.pick_next_task().unwrap();
+
+        for _ in 0..4 {
+            assert!(!sched.task_tick(&running));
+        }
+        assert!(sched.task_tick(&running));
+        assert_eq!(sched.stats().slice_expired, 1);
+    }
+
+    #[test]
+    fn stats_count_fallback_no_eligible() {
+        let mut sched = EevdfScheduler::<usize, 5>::new();
+        sched.set_stats_enabled(true);
+        sched.set_debug_force_no_eligible(true);
+        let t1 = Arc::new(EevdfEntity::<usize, 5>::new(1));
+        let t2 = Arc::new(EevdfEntity::<usize, 5>::new(2));
+        sched.add_task(t1);
+        sched.add_task(t2);
+
+        let _ = sched.pick_next_task().unwrap();
+        let stats = sched.stats();
+        assert_eq!(stats.picks_total, 1);
+        assert_eq!(stats.fallback_no_eligible, 1);
+    }
 }
 
 mod eevdf_priority {

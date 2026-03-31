@@ -13,7 +13,7 @@ mod tests;
 extern crate alloc;
 
 pub use cfs::{CFSTask, CFScheduler};
-pub use eevdf::{EevdfEntity, EevdfScheduler};
+pub use eevdf::{EevdfEntity, EevdfScheduler, EevdfStats};
 pub use eevdf_class::{EevdfClassScheduler, EevdfClassStats, EevdfClassWindowStats, EevdfTask};
 pub use fifo::{FifoScheduler, FifoTask};
 pub use round_robin::{RRScheduler, RRTask};
