@@ -88,6 +88,9 @@ chmod +x /root/bench-regression-eevdf.sh
 # Optional: more background tasks
 LOAD=6 /root/bench-regression-eevdf.sh
 
+# Optional: customize sample counts (comma-separated)
+SAMPLES=30,100 /root/bench-regression-eevdf.sh
+
 # Optional: run a second foreground probe (separate result files by probe name)
 PROBE_NAME=busybox_sha256 PROBE_CMD='sha256sum /bin/busybox >/dev/null' /root/bench-regression-eevdf.sh
 

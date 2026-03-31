@@ -197,6 +197,12 @@ cargo test -p axsched eevdf_tests -- --nocapture
 
    输出会生成独立文件（例如 `busybox_sha256-latest.tsv`），可与 `ls` 探针结果并列放入报告，提升结论说服力。
 
+3. **样本量参数化（便于快速试跑与正式复现）**
+
+   脚本支持 `SAMPLES`（逗号分隔），默认 `50,200`。例如：
+
+   - `SAMPLES=30,100 sh /root/bench-regression-eevdf.sh`
+
 ## 10. 结论
 
 本次工作完成了 StarryOS 中 per-task EEVDF 相关链路的实现与验证。实验表明，在相同后台压力下，调整 `nice` 能显著改变前台响应时延；单元测试进一步验证了 EEVDF 的关键语义（eligible、deadline、抢占、优先级边界）。整体上，这一实现既有可观测的整机效果，也有可复现的代码级验证依据。

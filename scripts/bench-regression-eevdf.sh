@@ -5,6 +5,7 @@
 #
 # Optional:
 #   LOAD=6 sh /root/bench-regression-eevdf.sh
+#   SAMPLES=30,100 sh /root/bench-regression-eevdf.sh
 #   BASELINE_MODE=refresh sh /root/bench-regression-eevdf.sh
 #   PROBE_NAME=busybox_sha256 PROBE_CMD='sha256sum /bin/busybox >/dev/null' sh /root/bench-regression-eevdf.sh
 
@@ -14,11 +15,18 @@ LOAD="${LOAD:-4}"
 RESULT_DIR="${RESULT_DIR:-/root/bench-results}"
 PROBE_NAME="${PROBE_NAME:-ls}"
 PROBE_CMD="${PROBE_CMD:-ls >/dev/null}"
+SAMPLES="${SAMPLES:-50,200}"
 BASELINE_FILE="${RESULT_DIR}/${PROBE_NAME}-baseline.tsv"
 LATEST_FILE="${RESULT_DIR}/${PROBE_NAME}-latest.tsv"
 TABLE_FILE="${RESULT_DIR}/${PROBE_NAME}-latest-table.md"
 ARCHIVE_FILE="${RESULT_DIR}/${PROBE_NAME}-history.tsv"
 BASELINE_MODE="${BASELINE_MODE:-check}" # check | refresh
+
+SAMPLE_LIST="$(echo "${SAMPLES}" | tr ',' ' ')"
+if [ -z "${SAMPLE_LIST}" ]; then
+    echo "[bench] ERROR: SAMPLES is empty"
+    exit 1
+fi
 
 mkdir -p "${RESULT_DIR}"
 
@@ -100,20 +108,24 @@ compare_baseline() {
     done < "${LATEST_FILE}"
 }
 
-echo "[bench] running base/nice19 regression (probe=${PROBE_NAME}; N=50,200; load=${LOAD})"
+echo "[bench] running base/nice19 regression (probe=${PROBE_NAME}; samples=${SAMPLES}; load=${LOAD})"
 echo "[bench] probe cmd: ${PROBE_CMD}"
 
-run_case base 50
-run_case nice19 50
-run_case base 200
-run_case nice19 200
-
-{
-    calc_stats base 50
-    calc_stats nice19 50
-    calc_stats base 200
-    calc_stats nice19 200
-} > "${LATEST_FILE}"
+: > "${LATEST_FILE}"
+for n in ${SAMPLE_LIST}; do
+    case "${n}" in
+        ''|*[!0-9]*)
+            echo "[bench] ERROR: invalid sample '${n}' in SAMPLES='${SAMPLES}'"
+            exit 1
+            ;;
+        *)
+            ;;
+    esac
+    run_case base "${n}"
+    run_case nice19 "${n}"
+    calc_stats base "${n}" >> "${LATEST_FILE}"
+    calc_stats nice19 "${n}" >> "${LATEST_FILE}"
+done
 
 write_table "${TABLE_FILE}"
 
