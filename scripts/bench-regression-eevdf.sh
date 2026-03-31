@@ -8,6 +8,7 @@
 #   SAMPLES=30,100 sh /root/bench-regression-eevdf.sh
 #   BASELINE_MODE=refresh sh /root/bench-regression-eevdf.sh
 #   PROBE_NAME=busybox_sha256 PROBE_CMD='sha256sum /bin/busybox >/dev/null' sh /root/bench-regression-eevdf.sh
+#   MARKERS=0 sh /root/bench-regression-eevdf.sh   # disable console markers
 
 set -eu
 
@@ -21,6 +22,7 @@ LATEST_FILE="${RESULT_DIR}/${PROBE_NAME}-latest.tsv"
 TABLE_FILE="${RESULT_DIR}/${PROBE_NAME}-latest-table.md"
 ARCHIVE_FILE="${RESULT_DIR}/${PROBE_NAME}-history.tsv"
 BASELINE_MODE="${BASELINE_MODE:-check}" # check | refresh
+MARKERS="${MARKERS:-1}" # 1 | 0
 
 SAMPLE_LIST="$(echo "${SAMPLES}" | tr ',' ' ')"
 if [ -z "${SAMPLE_LIST}" ]; then
@@ -34,6 +36,11 @@ run_case() {
     label="$1"   # base | nice19
     samples="$2" # 50 | 200
     out_file="${RESULT_DIR}/${PROBE_NAME}_${label}_${samples}.txt"
+    case_id="${PROBE_NAME}:${label}:${samples}:load${LOAD}"
+
+    if [ "${MARKERS}" = "1" ]; then
+        echo "[bench-marker] case-start ${case_id}"
+    fi
 
     killall yes 2>/dev/null || true
 
@@ -55,6 +62,10 @@ run_case() {
     done > "${out_file}" 2>&1
 
     killall yes 2>/dev/null || true
+
+    if [ "${MARKERS}" = "1" ]; then
+        echo "[bench-marker] case-end ${case_id}"
+    fi
 }
 
 calc_stats() {

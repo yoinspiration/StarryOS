@@ -218,6 +218,14 @@ SMP=2 补充观测（`make run LOG=info FEATURES=eevdf-stats-demo SMP=2`）显�
 
 该结果进一步证明：当前 demo 方案在多核场景下也具备可观测性，可用于展示每 CPU 的调度统计视角。
 
+进一步地，对负载日志 `bench-results/serial-load-20260331-060723.log` 使用
+`scripts/parse-eevdf-stats-log.sh` 进行 `delta` 聚合统计，得到：
+
+- `cpu1`: `windows=124`、`nonzero_windows=116`、`sum_delta_picks=5864`、`sum_delta_preempt=3`、`sum_delta_slice=5839`、`sum_delta_fallback=0`
+- `cpu0`: `windows=124`、`nonzero_windows=116`、`sum_delta_picks=5852`、`sum_delta_preempt=0`、`sum_delta_slice=5838`、`sum_delta_fallback=0`
+
+该结果说明在持续负载阶段两核窗口级调度活跃度均显著上升，且两核活动总量接近；同时 `sum_delta_fallback=0` 继续符合当前实现的常见运行行为预期。
+
 ## 8. 已知局限
 
 为避免结论外推过度，本报告明确以下边界条件：
