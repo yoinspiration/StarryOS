@@ -94,6 +94,12 @@ pub fn init_scheduler() {
     crate::run_queue::init();
 
     info!("  use {} scheduler.", Scheduler::scheduler_name());
+
+    #[cfg(all(feature = "sched-eevdf", feature = "eevdf-stats-demo"))]
+    {
+        // Periodic `info!` lines on timer ticks; requires `LOG=info` (or lower).
+        set_eevdf_stats_log_config(true, 256);
+    }
 }
 
 pub(crate) fn cpu_mask_full() -> AxCpuMask {
@@ -114,6 +120,12 @@ pub(crate) fn cpu_mask_full() -> AxCpuMask {
 /// Initializes the task scheduler for secondary CPUs.
 pub fn init_scheduler_secondary() {
     crate::run_queue::init_secondary();
+
+    #[cfg(all(feature = "sched-eevdf", feature = "eevdf-stats-demo"))]
+    {
+        // Keep per-CPU demo behavior consistent with primary CPU.
+        set_eevdf_stats_log_config(true, 256);
+    }
 }
 
 /// Handles periodic timer ticks for the task manager.

@@ -66,6 +66,8 @@ qemu = [
 smp = ["axfeat/smp", "axplat-riscv64-visionfive2?/smp"]
 
 vf2 = ["dep:axplat-riscv64-visionfive2", "axfeat/driver-sdmmc"]
+# Enables boot-time EEVDF stats logging (see scripts/demo-eevdf-stats.sh).
+eevdf-stats-demo = ["axfeat/eevdf-stats-demo"]
 
 [[bin]]
 name = "starryos"

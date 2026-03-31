@@ -57,6 +57,8 @@ sched-eevdf = [
     "multitask",
     "preempt",
 ]
+# Boot-time periodic info log for EEVDF counters (demo / advisor walkthrough).
+eevdf-stats-demo = ["sched-eevdf"]
 sched-eevdf-class = [
     "multitask",
     "preempt",

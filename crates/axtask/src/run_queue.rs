@@ -25,6 +25,7 @@ struct EevdfStatsLogConfig {
     enabled: bool,
     interval_ticks: u64,
     ticks: u64,
+    last_stats: axsched::EevdfStats,
 }
 
 macro_rules! percpu_static {
@@ -473,6 +474,7 @@ impl<G: BaseGuard> CurrentRunQueueRef<'_, G> {
     #[cfg(feature = "sched-eevdf")]
     pub fn reset_eevdf_stats(&mut self) {
         self.inner.scheduler.lock().reset_stats();
+        self.inner.eevdf_stats_log.last_stats = axsched::EevdfStats::default();
     }
 
     #[cfg(feature = "sched-eevdf")]
@@ -481,7 +483,10 @@ impl<G: BaseGuard> CurrentRunQueueRef<'_, G> {
         self.inner.eevdf_stats_log.interval_ticks = interval_ticks.max(1);
         self.inner.eevdf_stats_log.ticks = 0;
         if enabled {
-            self.inner.scheduler.lock().set_stats_enabled(true);
+            let mut scheduler = self.inner.scheduler.lock();
+            scheduler.set_stats_enabled(true);
+            // Use current cumulative counters as baseline; next line shows per-window delta.
+            self.inner.eevdf_stats_log.last_stats = scheduler.stats();
         }
     }
 
@@ -527,6 +532,7 @@ impl AxRunQueue {
                 enabled: false,
                 interval_ticks: 256,
                 ticks: 0,
+                last_stats: axsched::EevdfStats::default(),
             },
         }
     }
@@ -543,13 +549,32 @@ impl AxRunQueue {
         self.eevdf_stats_log.ticks = 0;
 
         let stats = self.scheduler.lock().stats();
+        let delta = axsched::EevdfStats {
+            picks_total: stats
+                .picks_total
+                .saturating_sub(self.eevdf_stats_log.last_stats.picks_total),
+            preempt_by_deadline: stats.preempt_by_deadline.saturating_sub(
+                self.eevdf_stats_log.last_stats.preempt_by_deadline,
+            ),
+            fallback_no_eligible: stats.fallback_no_eligible.saturating_sub(
+                self.eevdf_stats_log.last_stats.fallback_no_eligible,
+            ),
+            slice_expired: stats
+                .slice_expired
+                .saturating_sub(self.eevdf_stats_log.last_stats.slice_expired),
+        };
+        self.eevdf_stats_log.last_stats = stats;
         info!(
-            "eevdf stats cpu{}: picks_total={} preempt_by_deadline={} slice_expired={} fallback_no_eligible={}",
+            "eevdf stats cpu{}: total[picks={} preempt={} slice_expired={} fallback={}] delta[picks={} preempt={} slice_expired={} fallback={}]",
             self.cpu_id,
             stats.picks_total,
             stats.preempt_by_deadline,
             stats.slice_expired,
-            stats.fallback_no_eligible
+            stats.fallback_no_eligible,
+            delta.picks_total,
+            delta.preempt_by_deadline,
+            delta.slice_expired,
+            delta.fallback_no_eligible
         );
     }
 

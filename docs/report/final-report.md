@@ -16,7 +16,7 @@
 
 ## 1. 摘要
 
-本报告围绕 StarryOS 中的调度优化工作展开：在内核中使用 per-task EEVDF 调度路径，并打通 `nice` / `setpriority` 到调度权重的作用链路。我们在相同后台负载（4 个 `yes`）下对比不同 `nice` 设置对前台命令 `ls` 的影响，观察到明显分层：`nice 19` 时约 0.04 到 0.05s，默认优先级约 0.60 到 0.63s，`nice -10` 时可上升到 2 到 3s。与此同时，`cargo test -p axsched eevdf_tests -- --nocapture` 的 6 个 EEVDF 语义测试全部通过，覆盖了资格判定、deadline 驱动抢占与优先级边界。结果表明该实现能够有效调节后台 CPU 竞争对前台交互响应的影响，并具备可复现的验证路径。
+本报告围绕 StarryOS 中的调度优化工作展开：在内核中使用 per-task EEVDF 调度路径，并打通 `nice` / `setpriority` 到调度权重的作用链路。我们在相同后台负载（4 个 `yes`）下对比不同 `nice` 设置对前台命令 `ls` 的影响，观察到明显分层：`nice 19` 时约 0.04 到 0.05s，默认优先级约 0.60 到 0.63s，`nice -10` 时可上升到 2 到 3s。与此同时，`cargo test -p axsched eevdf_tests -- --nocapture` 的 11 个测试全部通过，覆盖资格判定、deadline 驱动抢占、优先级边界与统计计数路径。结果表明该实现能够有效调节后台 CPU 竞争对前台交互响应的影响，并具备可复现的验证路径。
 
 ## 2. 背景与目标
 
@@ -148,7 +148,7 @@ killall yes 2>/dev/null
 cargo test -p axsched eevdf_tests -- --nocapture
 ```
 
-结果：9/9 通过。
+结果：11/11 通过。
 
 覆盖点包括：
 
@@ -172,6 +172,51 @@ cargo test -p axsched eevdf_tests -- --nocapture
 - 周期日志开关：`set_eevdf_stats_log_config(enabled, interval_ticks)`
 
 其中周期日志默认关闭；启用后会按间隔输出 `picks_total / preempt_by_deadline / slice_expired / fallback_no_eligible`，可用于现场演示与实验对照。
+
+### 7.4 一条命令演示与启停负载观测（guest）
+
+为便于现场汇报，本阶段新增演示 feature：`eevdf-stats-demo`。启用后，系统启动即开启 EEVDF 周期统计日志（示例间隔 256 tick）。
+
+host 侧启动命令：
+
+```sh
+make run LOG=info FEATURES=eevdf-stats-demo
+```
+
+guest 侧最小复现步骤：
+
+```sh
+# 1) 施加负载
+yes >/dev/null &
+yes >/dev/null &
+yes >/dev/null &
+yes >/dev/null &
+
+# 2) 观察一段 eevdf stats 日志后停止负载
+killall yes
+```
+
+本次实测现象（与日志一致）：
+
+- 施压阶段：`picks_total` 与 `slice_expired` 快速持续增长（例如 `49 -> 600`、`15 -> 527`）。
+- 停压后：`killall yes` 对应任务收到 `SIGTERM` 并退出，统计进入平台期（例如 `2093 -> 2112` 后基本不再增长）。
+- `fallback_no_eligible` 持续为 0，符合当前 `V`（就绪队列 `vruntime` 加权平均）定义下的常见运行行为。
+
+该观测形成了“加压增长、停压趋稳”的闭环证据，可直接用于导师现场演示与报告截图说明。
+
+SMP=2 补充观测（`make run LOG=info FEATURES=eevdf-stats-demo SMP=2`）显示：
+
+- 启动日志可见 `Secondary CPU 1 started/init OK`，确认双核生效；
+- 周期统计同时出现 `eevdf stats cpu0` 与 `eevdf stats cpu1`，说明主核与副核 runqueue 均已开启统计日志；
+- 空闲阶段两路计数保持平台化（例如 `cpu0: picks_total=7`、`cpu1: picks_total=9`），符合“无显著负载时仅少量系统活动”的预期。
+
+当前日志格式已升级为 `total[...] + delta[...]`：
+
+- `total`：自启动以来累计计数；
+- `delta`：当前日志窗口内新增计数（相邻两次日志差分）；
+- 在空闲阶段，实测 `delta[picks=0 preempt=0 slice_expired=0 fallback=0]`，可直接作为“当前窗口调度活跃度接近 0”的证据。
+
+该结果进一步证明：当前 demo 方案在多核场景下也具备可观测性，可用于展示每 CPU 的调度统计视角。
 
 ## 8. 已知局限
 

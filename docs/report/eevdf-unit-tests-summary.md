@@ -6,7 +6,7 @@
 cargo test -p axsched eevdf_tests -- --nocapture
 ```
 
-若 **11 个测试全部通过**，说明当前 `eevdf_tests` 模块里与 **EEVDF 语义**相关的用例在你环境中均成立。
+若 **11 个测试全部通过**，说明当前 `eevdf_tests` 模块里与 **EEVDF 语义**相关的用例在你环境中均成立。结合 guest 侧 `eevdf-stats-demo` 的“加压增长、停压趋稳”观测，可形成“代码语义 + 运行时行为”的双证据闭环。
 
 ## 测试与含义（汇报时可一测一行）
 

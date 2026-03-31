@@ -155,6 +155,7 @@ sched-eevdf = [
     "axtask/sched-eevdf",
     "irq",
 ]
+eevdf-stats-demo = ["sched-eevdf", "axtask/eevdf-stats-demo"]
 sched-eevdf-class = [
     "axtask/sched-eevdf-class",
     "irq",
