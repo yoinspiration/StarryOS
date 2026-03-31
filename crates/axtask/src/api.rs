@@ -207,6 +207,14 @@ pub fn reset_eevdf_stats() {
     current_run_queue::<NoPreemptIrqSave>().reset_eevdf_stats();
 }
 
+/// Configure periodic info-log output for per-task EEVDF runtime counters.
+///
+/// Only available when `sched-eevdf` is enabled.
+#[cfg(feature = "sched-eevdf")]
+pub fn set_eevdf_stats_log_config(enabled: bool, interval_ticks: u64) {
+    current_run_queue::<NoPreemptIrqSave>().set_eevdf_stats_log_config(enabled, interval_ticks);
+}
+
 /// Configure EEVDF-class scheduler statistics output behavior.
 ///
 /// Only available when `sched-eevdf-class` is enabled.

@@ -164,6 +164,15 @@ cargo test -p axsched eevdf_tests -- --nocapture
 
 在整机层面，`make ARCH=riscv64 ci-test` 可正常启动到 BusyBox shell，说明当前调度路径在系统集成层可运行。
 
+### 7.3 可观测性增强（per-task EEVDF）
+
+为提升运行时可见性，当前实现已在 `sched-eevdf` 路径提供：
+
+- 统计 API：`set_eevdf_stats_enabled`、`eevdf_stats`、`reset_eevdf_stats`
+- 周期日志开关：`set_eevdf_stats_log_config(enabled, interval_ticks)`
+
+其中周期日志默认关闭；启用后会按间隔输出 `picks_total / preempt_by_deadline / slice_expired / fallback_no_eligible`，可用于现场演示与实验对照。
+
 ## 8. 已知局限
 
 为避免结论外推过度，本报告明确以下边界条件：

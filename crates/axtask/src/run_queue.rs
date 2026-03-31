@@ -20,6 +20,13 @@ use crate::{
     task::{CurrentTask, TaskState},
 };
 
+#[cfg(feature = "sched-eevdf")]
+struct EevdfStatsLogConfig {
+    enabled: bool,
+    interval_ticks: u64,
+    ticks: u64,
+}
+
 macro_rules! percpu_static {
     ($(
         $(#[$comment:meta])*
@@ -211,6 +218,8 @@ pub(crate) struct AxRunQueue {
     /// Since irq and preempt are preserved by the kernel guard hold by `AxRunQueueRef`,
     /// we just use a simple raw spin lock here.
     scheduler: SpinRaw<Scheduler>,
+    #[cfg(feature = "sched-eevdf")]
+    eevdf_stats_log: EevdfStatsLogConfig,
 }
 
 /// A reference to the run queue with specific guard.
@@ -306,6 +315,8 @@ impl<G: BaseGuard> CurrentRunQueueRef<'_, G> {
             #[cfg(feature = "preempt")]
             curr.set_preempt_pending(true);
         }
+        #[cfg(feature = "sched-eevdf")]
+        self.inner.maybe_log_eevdf_stats();
     }
 
     /// Yield the current task and reschedule.
@@ -464,6 +475,16 @@ impl<G: BaseGuard> CurrentRunQueueRef<'_, G> {
         self.inner.scheduler.lock().reset_stats();
     }
 
+    #[cfg(feature = "sched-eevdf")]
+    pub fn set_eevdf_stats_log_config(&mut self, enabled: bool, interval_ticks: u64) {
+        self.inner.eevdf_stats_log.enabled = enabled;
+        self.inner.eevdf_stats_log.interval_ticks = interval_ticks.max(1);
+        self.inner.eevdf_stats_log.ticks = 0;
+        if enabled {
+            self.inner.scheduler.lock().set_stats_enabled(true);
+        }
+    }
+
     #[cfg(feature = "sched-eevdf-class")]
     pub fn set_scheduler_stats_config(&mut self, enabled: bool, window_ticks: u64) {
         self.inner
@@ -501,7 +522,35 @@ impl AxRunQueue {
         Self {
             cpu_id,
             scheduler: SpinRaw::new(scheduler),
+            #[cfg(feature = "sched-eevdf")]
+            eevdf_stats_log: EevdfStatsLogConfig {
+                enabled: false,
+                interval_ticks: 256,
+                ticks: 0,
+            },
         }
+    }
+
+    #[cfg(feature = "sched-eevdf")]
+    fn maybe_log_eevdf_stats(&mut self) {
+        if !self.eevdf_stats_log.enabled {
+            return;
+        }
+        self.eevdf_stats_log.ticks = self.eevdf_stats_log.ticks.saturating_add(1);
+        if self.eevdf_stats_log.ticks < self.eevdf_stats_log.interval_ticks {
+            return;
+        }
+        self.eevdf_stats_log.ticks = 0;
+
+        let stats = self.scheduler.lock().stats();
+        info!(
+            "eevdf stats cpu{}: picks_total={} preempt_by_deadline={} slice_expired={} fallback_no_eligible={}",
+            self.cpu_id,
+            stats.picks_total,
+            stats.preempt_by_deadline,
+            stats.slice_expired,
+            stats.fallback_no_eligible
+        );
     }
 
     /// Puts target task into current run queue with `Ready` state
