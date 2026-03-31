@@ -449,6 +449,21 @@ impl<G: BaseGuard> CurrentRunQueueRef<'_, G> {
             .set_priority(&self.current_task, prio)
     }
 
+    #[cfg(feature = "sched-eevdf")]
+    pub fn set_eevdf_stats_enabled(&mut self, enabled: bool) {
+        self.inner.scheduler.lock().set_stats_enabled(enabled);
+    }
+
+    #[cfg(feature = "sched-eevdf")]
+    pub fn eevdf_stats(&mut self) -> axsched::EevdfStats {
+        self.inner.scheduler.lock().stats()
+    }
+
+    #[cfg(feature = "sched-eevdf")]
+    pub fn reset_eevdf_stats(&mut self) {
+        self.inner.scheduler.lock().reset_stats();
+    }
+
     #[cfg(feature = "sched-eevdf-class")]
     pub fn set_scheduler_stats_config(&mut self, enabled: bool, window_ticks: u64) {
         self.inner

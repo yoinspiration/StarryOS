@@ -187,6 +187,26 @@ pub fn set_priority_for_task(task: &AxTaskRef, prio: isize) -> bool {
     crate::run_queue::run_queue_for_task::<NoPreemptIrqSave>(task).set_task_priority(task, prio)
 }
 
+/// Enable or disable per-task EEVDF runtime counters.
+///
+/// Only available when `sched-eevdf` is enabled.
+#[cfg(feature = "sched-eevdf")]
+pub fn set_eevdf_stats_enabled(enabled: bool) {
+    current_run_queue::<NoPreemptIrqSave>().set_eevdf_stats_enabled(enabled);
+}
+
+/// Read per-task EEVDF runtime counters.
+#[cfg(feature = "sched-eevdf")]
+pub fn eevdf_stats() -> axsched::EevdfStats {
+    current_run_queue::<NoPreemptIrqSave>().eevdf_stats()
+}
+
+/// Reset per-task EEVDF runtime counters.
+#[cfg(feature = "sched-eevdf")]
+pub fn reset_eevdf_stats() {
+    current_run_queue::<NoPreemptIrqSave>().reset_eevdf_stats();
+}
+
 /// Configure EEVDF-class scheduler statistics output behavior.
 ///
 /// Only available when `sched-eevdf-class` is enabled.
