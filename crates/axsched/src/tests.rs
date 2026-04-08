@@ -82,7 +82,6 @@ macro_rules! def_test_sched {
 def_test_sched!(fifo, FifoScheduler::<usize>, FifoTask::<usize>);
 def_test_sched!(rr, RRScheduler::<usize, 5>, RRTask::<usize, 5>);
 def_test_sched!(cfs, CFScheduler::<usize>, CFSTask::<usize>);
-def_test_sched!(eevdf_class, EevdfClassScheduler::<usize, 5>, EevdfTask::<usize, 5>);
 def_test_sched!(eevdf, EevdfScheduler::<usize, 5>, EevdfEntity::<usize, 5>);
 
 mod eevdf_tests {
@@ -277,99 +276,5 @@ mod eevdf_tests {
         assert_eq!(after.preempt_by_deadline, 0);
         assert_eq!(after.slice_expired, 0);
         assert_eq!(after.fallback_no_eligible, 0);
-    }
-}
-
-mod eevdf_priority {
-    use crate::*;
-    use alloc::sync::Arc;
-
-    #[test]
-    fn test_set_priority_reorders_enqueued_task() {
-        let mut scheduler = EevdfClassScheduler::<usize, 5>::new();
-        let t1 = Arc::new(EevdfTask::<usize, 5>::new(1));
-        let t2 = Arc::new(EevdfTask::<usize, 5>::new(2));
-
-        scheduler.add_task(t1.clone());
-        scheduler.add_task(t2.clone());
-
-        // Move t2 to interactive class; it should be preferred next.
-        assert!(scheduler.set_priority(&t2, -20));
-        let next = scheduler.pick_next_task().unwrap();
-        assert_eq!(*next.inner(), 2);
-    }
-
-    #[test]
-    fn test_set_priority_rejects_out_of_range_nice() {
-        let mut scheduler = EevdfClassScheduler::<usize, 5>::new();
-        let t = Arc::new(EevdfTask::<usize, 5>::new(1));
-        scheduler.add_task(t.clone());
-
-        assert!(!scheduler.set_priority(&t, -21));
-        assert!(!scheduler.set_priority(&t, 20));
-    }
-
-    #[test]
-    fn test_set_priority_on_running_task_keeps_scheduler_consistent() {
-        let mut scheduler = EevdfClassScheduler::<usize, 5>::new();
-        let t1 = Arc::new(EevdfTask::<usize, 5>::new(1));
-        let t2 = Arc::new(EevdfTask::<usize, 5>::new(2));
-        scheduler.add_task(t1.clone());
-        scheduler.add_task(t2.clone());
-
-        // t1 becomes running (popped from queue).
-        let running = scheduler.pick_next_task().unwrap();
-        assert_eq!(*running.inner(), 1);
-
-        // Changing priority of the running task should not panic or corrupt state.
-        assert!(scheduler.set_priority(&running, 19));
-
-        // Put it back and ensure scheduler still returns tasks.
-        scheduler.put_prev_task(running, false);
-        assert!(scheduler.pick_next_task().is_some());
-    }
-
-    #[test]
-    fn test_eevdf_stats_count_picks_and_ticks() {
-        let mut scheduler = EevdfClassScheduler::<usize, 5>::new();
-        let t1 = Arc::new(EevdfTask::<usize, 5>::new(1));
-        let t2 = Arc::new(EevdfTask::<usize, 5>::new(2));
-        scheduler.add_task(t1);
-        scheduler.add_task(t2);
-
-        // Run a few scheduling cycles to accumulate stats.
-        for _ in 0..4 {
-            let next = scheduler.pick_next_task().unwrap();
-            let _ = scheduler.task_tick(&next);
-            scheduler.put_prev_task(next, false);
-        }
-
-        let stats = scheduler.stats();
-        assert!(stats.pick_count.iter().sum::<u64>() > 0);
-        assert!(stats.charged_ticks.iter().sum::<u64>() > 0);
-    }
-
-    #[test]
-    fn test_eevdf_window_stats_configurable_and_disableable() {
-        let mut scheduler = EevdfClassScheduler::<usize, 5>::new();
-        let t = Arc::new(EevdfTask::<usize, 5>::new(1));
-        scheduler.add_task(t);
-
-        scheduler.set_stats_config(false, 32);
-        let next = scheduler.pick_next_task().unwrap();
-        let _ = scheduler.task_tick(&next);
-        scheduler.put_prev_task(next, false);
-
-        let window = scheduler.window_stats();
-        assert_eq!(window.pick_count.iter().sum::<u64>(), 0);
-        assert_eq!(window.charged_ticks.iter().sum::<u64>(), 0);
-
-        scheduler.set_stats_config(true, 1);
-        let next = scheduler.pick_next_task().unwrap();
-        let _ = scheduler.task_tick(&next);
-        scheduler.put_prev_task(next, false);
-        let window = scheduler.window_stats();
-        // window is reset immediately after each 1-tick report
-        assert_eq!(window.pick_count.iter().sum::<u64>(), 0);
     }
 }

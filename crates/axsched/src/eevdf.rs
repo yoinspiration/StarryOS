@@ -1,7 +1,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::Arc;
 use core::ops::Deref;
-use core::sync::atomic::{AtomicIsize, Ordering};
+use core::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
 
 use crate::BaseScheduler;
 
@@ -46,7 +46,7 @@ pub struct EevdfEntity<T, const MAX_TIME_SLICE: usize> {
     deadline: AtomicIsize,
     nice: AtomicIsize,
     slice: AtomicIsize,
-    id: AtomicIsize,
+    id: AtomicU64,
 }
 
 impl<T, const S: usize> EevdfEntity<T, S> {
@@ -57,7 +57,7 @@ impl<T, const S: usize> EevdfEntity<T, S> {
             deadline: AtomicIsize::new(0),
             nice: AtomicIsize::new(0),
             slice: AtomicIsize::new(S as isize),
-            id: AtomicIsize::new(0),
+            id: AtomicU64::new(0),
         }
     }
 
@@ -81,11 +81,11 @@ impl<T, const S: usize> EevdfEntity<T, S> {
         self.deadline.store(d, Ordering::Release);
     }
 
-    fn id(&self) -> isize {
+    fn id(&self) -> u64 {
         self.id.load(Ordering::Acquire)
     }
 
-    fn set_id(&self, id: isize) {
+    fn set_id(&self, id: u64) {
         self.id.store(id, Ordering::Release);
     }
 
@@ -133,14 +133,20 @@ pub struct EevdfStats {
 /// `MAX_TIME_SLICE` is the base time-slice length in timer ticks.
 pub struct EevdfScheduler<T, const MAX_TIME_SLICE: usize> {
     /// Ready tasks keyed by `(deadline, id)`.
-    ready_queue: BTreeMap<(isize, isize), Arc<EevdfEntity<T, MAX_TIME_SLICE>>>,
-    /// Secondary index keyed by `(vruntime, id)` for O(log N) min-vruntime.
-    vrt_set: BTreeSet<(isize, isize)>,
+    ready_queue: BTreeMap<(isize, u64), Arc<EevdfEntity<T, MAX_TIME_SLICE>>>,
+    /// Secondary index keyed by `(vruntime, id)` for O(log N) min-vruntime and
+    /// O(log N + E) eligible-task range queries.
+    vrt_set: BTreeSet<(isize, u64)>,
+    /// Reverse map from task id to its current deadline, used to look up the
+    /// `ready_queue` key for tasks found via `vrt_set` range queries.
+    id_to_deadline: BTreeMap<u64, isize>,
     min_vruntime: isize,
     /// Incrementally maintained for O(1) `avg_vruntime` queries.
     total_weighted_vrt: i128,
     total_weight: i128,
-    id_pool: isize,
+    /// Monotonically increasing counter used as tie-breaker in queue keys.
+    /// `u64` ensures wrap-around only after ~1.8×10¹⁹ scheduling events.
+    id_pool: u64,
     stats_enabled: bool,
     stats: EevdfStats,
     #[cfg(test)]
@@ -152,6 +158,7 @@ impl<T, const S: usize> EevdfScheduler<T, S> {
         Self {
             ready_queue: BTreeMap::new(),
             vrt_set: BTreeSet::new(),
+            id_to_deadline: BTreeMap::new(),
             min_vruntime: 0,
             total_weighted_vrt: 0,
             total_weight: 0,
@@ -195,7 +202,7 @@ impl<T, const S: usize> EevdfScheduler<T, S> {
         }
     }
 
-    fn next_id(&mut self) -> isize {
+    fn next_id(&mut self) -> u64 {
         let id = self.id_pool;
         self.id_pool = self.id_pool.wrapping_add(1);
         id
@@ -206,21 +213,24 @@ impl<T, const S: usize> EevdfScheduler<T, S> {
     fn enqueue(&mut self, task: Arc<EevdfEntity<T, S>>) {
         let vr = task.vruntime();
         let id = task.id();
+        let dl = task.deadline();
         let w = task.weight() as i128;
 
-        self.ready_queue.insert((task.deadline(), id), task);
+        self.ready_queue.insert((dl, id), task);
         self.vrt_set.insert((vr, id));
+        self.id_to_deadline.insert(id, dl);
         self.total_weighted_vrt += vr as i128 * w;
         self.total_weight += w;
     }
 
-    fn dequeue_by_key(&mut self, key: (isize, isize)) -> Option<Arc<EevdfEntity<T, S>>> {
+    fn dequeue_by_key(&mut self, key: (isize, u64)) -> Option<Arc<EevdfEntity<T, S>>> {
         let task = self.ready_queue.remove(&key)?;
         let vr = task.vruntime();
         let id = task.id();
         let w = task.weight() as i128;
 
         self.vrt_set.remove(&(vr, id));
+        self.id_to_deadline.remove(&id);
         self.total_weighted_vrt -= vr as i128 * w;
         self.total_weight -= w;
 
@@ -284,21 +294,41 @@ impl<T, const S: usize> BaseScheduler for EevdfScheduler<T, S> {
         let v = self.avg_vruntime();
         let mut used_fallback = false;
 
-        // Primary: earliest deadline among eligible tasks (vruntime ≤ V).
-        let key = self
-            .ready_queue
-            .iter()
-            .find(|(_, t)| t.vruntime() <= v)
-            .map(|(k, _)| *k);
+        // Fast path: if the min-deadline task is eligible, return it immediately — O(1).
+        let first_key = *self.ready_queue.keys().next().unwrap();
+        let first_vruntime = self.ready_queue[&first_key].vruntime();
 
+        let first_eligible = first_vruntime <= v;
+        // In tests, allow forcing the "no eligible" path to exercise fallback stats.
         #[cfg(test)]
-        let key = if self.debug_force_no_eligible { None } else { key };
+        let first_eligible = first_eligible && !self.debug_force_no_eligible;
 
-        if key.is_none() {
-            used_fallback = true;
-        }
-        // Fallback: earliest deadline unconditionally.
-        let key = key.or_else(|| self.ready_queue.keys().next().copied())?;
+        let key = if first_eligible {
+            first_key
+        } else {
+            // Slow path: min-deadline task is not eligible.
+            // Range-query vrt_set for all eligible tasks (vruntime ≤ V) and find
+            // the one with the earliest deadline — O(log N + E).
+            let eligible_key = self
+                .vrt_set
+                .range(..=(v, u64::MAX))
+                .map(|&(_, id)| (self.id_to_deadline[&id], id))
+                .min();
+
+            #[cfg(test)]
+            let eligible_key: Option<(isize, u64)> =
+                if self.debug_force_no_eligible { None } else { eligible_key };
+
+            match eligible_key {
+                Some(k) => k,
+                None => {
+                    // Fallback: no eligible task — pick min deadline unconditionally.
+                    used_fallback = true;
+                    first_key
+                }
+            }
+        };
+
         Self::stat_inc(&mut self.stats.picks_total, self.stats_enabled);
         if used_fallback {
             Self::stat_inc(&mut self.stats.fallback_no_eligible, self.stats_enabled);

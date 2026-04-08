@@ -156,10 +156,6 @@ sched-eevdf = [
     "irq",
 ]
 eevdf-stats-demo = ["sched-eevdf", "axtask/eevdf-stats-demo"]
-sched-eevdf-class = [
-    "axtask/sched-eevdf-class",
-    "irq",
-]
 sched-fifo = ["axtask/sched-fifo"]
 sched-rr = [
     "axtask/sched-rr",

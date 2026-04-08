@@ -34,10 +34,6 @@ cfg_if::cfg_if! {
         const MAX_TIME_SLICE: usize = 5;
         pub(crate) type AxTask = axsched::EevdfEntity<TaskInner, MAX_TIME_SLICE>;
         pub(crate) type Scheduler = axsched::EevdfScheduler<TaskInner, MAX_TIME_SLICE>;
-    } else if #[cfg(feature = "sched-eevdf-class")] {
-        const MAX_TIME_SLICE: usize = 5;
-        pub(crate) type AxTask = axsched::EevdfTask<TaskInner, MAX_TIME_SLICE>;
-        pub(crate) type Scheduler = axsched::EevdfClassScheduler<TaskInner, MAX_TIME_SLICE>;
     } else if #[cfg(feature = "sched-rr")] {
         const MAX_TIME_SLICE: usize = 5;
         pub(crate) type AxTask = axsched::RRTask<TaskInner, MAX_TIME_SLICE>;
@@ -225,26 +221,6 @@ pub fn reset_eevdf_stats() {
 #[cfg(feature = "sched-eevdf")]
 pub fn set_eevdf_stats_log_config(enabled: bool, interval_ticks: u64) {
     current_run_queue::<NoPreemptIrqSave>().set_eevdf_stats_log_config(enabled, interval_ticks);
-}
-
-/// Configure EEVDF-class scheduler statistics output behavior.
-///
-/// Only available when `sched-eevdf-class` is enabled.
-#[cfg(feature = "sched-eevdf-class")]
-pub fn set_scheduler_stats_config(enabled: bool, window_ticks: u64) {
-    current_run_queue::<NoPreemptIrqSave>().set_scheduler_stats_config(enabled, window_ticks);
-}
-
-/// Read cumulative EEVDF-class scheduler statistics.
-#[cfg(feature = "sched-eevdf-class")]
-pub fn scheduler_stats() -> axsched::EevdfClassStats {
-    current_run_queue::<NoPreemptIrqSave>().scheduler_stats()
-}
-
-/// Read current-window EEVDF-class scheduler statistics.
-#[cfg(feature = "sched-eevdf-class")]
-pub fn scheduler_window_stats() -> axsched::EevdfClassWindowStats {
-    current_run_queue::<NoPreemptIrqSave>().scheduler_window_stats()
 }
 
 /// Set the affinity for the current task.
