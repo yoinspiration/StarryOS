@@ -81,6 +81,20 @@ impl<T, const S: usize> EevdfEntity<T, S> {
         self.deadline.store(d, Ordering::Release);
     }
 
+    /// Accessors only used in unit tests to construct or inspect edge-case scenarios.
+    #[cfg(test)]
+    pub(crate) fn set_deadline_for_test(&self, d: isize) {
+        self.set_deadline(d);
+    }
+    #[cfg(test)]
+    pub(crate) fn vruntime_for_test(&self) -> isize {
+        self.vruntime()
+    }
+    #[cfg(test)]
+    pub(crate) fn slice_for_test(&self) -> isize {
+        self.slice()
+    }
+
     fn id(&self) -> u64 {
         self.id.load(Ordering::Acquire)
     }
@@ -342,9 +356,17 @@ impl<T, const S: usize> BaseScheduler for EevdfScheduler<T, S> {
         prev.set_vruntime(vr);
 
         if preempt && prev.slice() > 0 {
+            // Task was preempted before its slice expired.
             if prev.deadline() <= vr {
-                prev.set_deadline(vr + deadline_delta(S, prev.weight()));
+                // Deadline passed while the task was off-CPU (e.g. min_vruntime
+                // advanced).  Assign a new deadline proportional to the
+                // *remaining* slice, not the full slice — using the full slice
+                // would over-reward a task that already consumed part of its
+                // request.
+                prev.set_deadline(vr + deadline_delta(prev.slice() as usize, prev.weight()));
             }
+            // else: deadline still valid, preserve it so the task keeps its
+            // place in the deadline-ordered queue.
         } else {
             prev.reset_slice();
             prev.set_deadline(vr + deadline_delta(S, prev.weight()));

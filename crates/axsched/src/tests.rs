@@ -167,6 +167,58 @@ mod eevdf_tests {
     }
 
     #[test]
+    fn preempted_task_expired_deadline_uses_remaining_slice() {
+        // When a preempted task's deadline has already passed (e.g. because
+        // min_vruntime advanced), the new deadline must be proportional to the
+        // *remaining* slice, not the full slice.
+        const SLICE: usize = 5;
+        let mut sched = EevdfScheduler::<usize, SLICE>::new();
+        let t = Arc::new(EevdfEntity::<usize, SLICE>::new(1));
+        sched.add_task(t.clone());
+
+        let running = sched.pick_next_task().unwrap();
+        // Consume 2 ticks → 3 remaining.
+        sched.task_tick(&running);
+        sched.task_tick(&running);
+        assert_eq!(running.slice_for_test(), 3);
+
+        // Force deadline behind vruntime to simulate the "expired" branch.
+        let vr_now = running.vruntime_for_test();
+        running.set_deadline_for_test(vr_now - 1);
+
+        sched.put_prev_task(running, true);
+
+        let picked = sched.pick_next_task().unwrap();
+        let vr = picked.vruntime_for_test();
+        // Deadline must reflect the 3 remaining ticks, not the original 5.
+        // deadline_delta(3, 1024) = 3 * 1024²/1024 = 3072
+        // deadline_delta(5, 1024) = 5120  ← wrong (would over-reward)
+        let expected = vr + 3 * (1024isize * 1024 / 1024); // deadline_delta(3, nice_0_weight)
+        assert_eq!(picked.deadline(), expected);
+    }
+
+    #[test]
+    fn preempted_task_valid_deadline_not_overwritten() {
+        // When the deadline is still in the future, it must not be touched even
+        // if we would have computed a different value.
+        const SLICE: usize = 5;
+        let mut sched = EevdfScheduler::<usize, SLICE>::new();
+        let t = Arc::new(EevdfEntity::<usize, SLICE>::new(1));
+        sched.add_task(t.clone());
+
+        let running = sched.pick_next_task().unwrap();
+        let dl_before = running.deadline();
+        sched.task_tick(&running);
+        // vruntime grew by one delta; deadline is still well ahead.
+        assert!(running.vruntime_for_test() < dl_before);
+
+        sched.put_prev_task(running, true);
+
+        let picked = sched.pick_next_task().unwrap();
+        assert_eq!(picked.deadline(), dl_before);
+    }
+
+    #[test]
     fn deadline_preemption_triggers() {
         let mut sched = EevdfScheduler::<usize, 5>::new();
         let t1 = Arc::new(EevdfEntity::<usize, 5>::new(1));
