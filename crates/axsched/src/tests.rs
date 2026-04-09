@@ -330,3 +330,99 @@ mod eevdf_tests {
         assert_eq!(after.fallback_no_eligible, 0);
     }
 }
+
+mod eevdf_fairness {
+    use crate::*;
+    use alloc::sync::Arc;
+    use alloc::vec::Vec;
+
+    /// Run a single-CPU scheduling simulation for `total_ticks` ticks.
+    ///
+    /// Each entry in `task_nice` is `(task, nice_value)`. Returns a vector
+    /// where `counts[i]` is the number of ticks task `i` actually ran.
+    fn simulate<const S: usize>(
+        task_nice: &[(Arc<EevdfEntity<usize, S>>, isize)],
+        total_ticks: u64,
+    ) -> Vec<u64> {
+        let mut sched = EevdfScheduler::<usize, S>::new();
+        for (task, nice) in task_nice {
+            sched.add_task(task.clone());
+            sched.set_priority(task, *nice);
+        }
+
+        let n = task_nice.len();
+        let mut counts = alloc::vec![0u64; n];
+        let mut current = sched.pick_next_task().unwrap();
+        let mut elapsed = 0u64;
+
+        loop {
+            counts[*current.inner()] += 1;
+            elapsed += 1;
+
+            let should_switch = sched.task_tick(&current);
+            if should_switch || elapsed >= total_ticks {
+                // Preempted mid-slice vs. slice-expired/yield.
+                let preempt = should_switch && current.slice_for_test() > 0;
+                sched.put_prev_task(current, preempt);
+                if elapsed >= total_ticks {
+                    break;
+                }
+                current = sched.pick_next_task().unwrap();
+            }
+        }
+
+        counts
+    }
+
+    #[test]
+    fn equal_weight_tasks_share_cpu_evenly() {
+        // 3 tasks at nice 0 (weight 1024 each) — each should get ≈ 1/3 of CPU.
+        const S: usize = 5;
+        const N: usize = 3;
+        const TOTAL: u64 = 9_000; // divisible by 3 for clean expected value
+
+        let tasks: Vec<_> = (0..N)
+            .map(|i| (Arc::new(EevdfEntity::<usize, S>::new(i)), 0isize))
+            .collect();
+
+        let counts = simulate(&tasks, TOTAL);
+
+        let expected = TOTAL / N as u64; // 3 000 ticks each
+        for (i, &got) in counts.iter().enumerate() {
+            let err = (got as f64 - expected as f64).abs() / expected as f64;
+            assert!(
+                err < 0.05,
+                "task {i}: expected ~{expected} ticks, got {got} ({:.1}% error)",
+                err * 100.0,
+            );
+        }
+    }
+
+    #[test]
+    fn weighted_tasks_get_proportional_cpu() {
+        // nice -5 → weight 3121, nice 0 → weight 1024, nice 5 → weight 335
+        // Expected CPU shares: ≈ 69.7% / 22.9% / 7.5%
+        const S: usize = 5;
+        const TOTAL: u64 = 15_000;
+
+        let nice_vals = [-5isize, 0, 5];
+        let weights = [3121isize, 1024, 335];
+        let total_weight: isize = weights.iter().sum(); // 4 480
+
+        let tasks: Vec<_> = (0..3)
+            .map(|i| (Arc::new(EevdfEntity::<usize, S>::new(i)), nice_vals[i]))
+            .collect();
+
+        let counts = simulate(&tasks, TOTAL);
+
+        for (i, (&got, &w)) in counts.iter().zip(weights.iter()).enumerate() {
+            let expected = TOTAL as f64 * w as f64 / total_weight as f64;
+            let err = (got as f64 - expected).abs() / expected;
+            assert!(
+                err < 0.10,
+                "task {i} (weight {w}): expected ~{expected:.0} ticks, got {got} ({:.1}% error)",
+                err * 100.0,
+            );
+        }
+    }
+}
