@@ -8,7 +8,7 @@ CPU 一次只能运行一个任务。但电脑上同时有几十个程序在跑�
 
 ### 最朴素的方法：轮流来
 
-每个任务轮流用 CPU，用一段时间（时间片）就换下一个。这叫轮转调度（Round Robin）。
+每个任务轮流用 CPU，用一段时间（时间片）就换下一个。这叫**轮转调度（Round Robin）**。
 
 问题：所有任务一视同仁，但有些任务应该比其他任务得到更多 CPU（比如视频播放 vs 后台同步）。
 
@@ -178,3 +178,74 @@ picks=2041  preempt=9  slice_expired=1177  fallback=0
 - `fallback=0`：全程所有任务均保持 eligible，调度器工作在理想状态
 - `preempt=9`：deadline 驱动的抢占正常触发
 - `slice_expired=1177`：绝大多数任务正常耗尽时间片
+
+---
+
+## 扩展：per-CPU 异构调度
+
+### 问题
+
+StarryOS 原本的调度器是编译时全局确定的——所有 CPU 用同一种算法。但不同场景对调度的需求不同：
+
+- 实时任务希望用 FIFO，绑定到指定 CPU，不被其他任务打断
+- 交互任务希望用 EEVDF，保证延迟上界
+- 批处理任务用轮转（RR）即可，不需要复杂的优先级计算
+
+因此希望每个 CPU 在运行时独立选择调度算法。
+
+### 方案：元数据分离
+
+调度状态（vruntime、deadline、时间片、nice 值）不放在任务结构体里，而是存在调度器自己的 BTreeMap 中：
+
+```
+scheduler.metadata: BTreeMap<task_id, EevdfMeta>
+```
+
+任务结构体只需实现一个最小接口：
+
+```rust
+trait HasSchedulerId {
+    fn sched_id(&self) -> u64;
+}
+```
+
+这样任务本身是纯粹的 `TaskInner`，不携带任何调度字段。
+
+### 跨调度器迁移
+
+元数据分离的核心好处：同一个 `Arc<Task>` 可以直接从一个调度器移到另一个，无需类型转换。
+
+```rust
+// 从 EEVDF 取出任务
+let task = eevdf.remove_task(&t);
+// 直接放入 FIFO，类型完全一致
+fifo.add_task(task);
+```
+
+旧调度器的元数据（vruntime 等）在 `remove_task` 时自动清理，新调度器在 `add_task` 时重新初始化自己需要的元数据。
+
+### 实现结构
+
+```
+PerCpuScheduler<T>
+├── Eevdf(MetadataEevdf<T>)   ← ready_queue + vrt_set + metadata BTreeMap
+├── Fifo(MetadataFifo<T>)     ← VecDeque
+└── Rr(MetadataRr<T>)         ← VecDeque + 每任务剩余时间片表
+```
+
+启动时，可以在 `init_scheduler` 之前为每个 CPU 指定算法：
+
+```rust
+axtask::set_cpu_scheduler_kind(0, SchedulerKind::Eevdf);
+axtask::set_cpu_scheduler_kind(1, SchedulerKind::Fifo);
+```
+
+### 验证
+
+| 测试 | 内容 |
+|------|------|
+| `fifo_picks_in_insertion_order` | FIFO 按入队顺序出队 |
+| `fifo_never_preempts_on_tick` | FIFO 不触发抢占 |
+| `rr_preempts_after_slice_expires` | RR 在时间片耗尽后触发抢占 |
+| `eevdf_fairness_equal_weight` | 等权重 3 任务，CPU 占比误差 ±5% |
+| `task_migrates_between_schedulers` | 同一 Arc<Task> 从 EEVDF 迁移到 FIFO，无需类型转换 |

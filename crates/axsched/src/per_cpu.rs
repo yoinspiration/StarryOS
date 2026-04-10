@@ -249,7 +249,10 @@ impl<T: HasSchedulerId> BaseScheduler for MetadataEevdf<T> {
 
     fn put_prev_task(&mut self, prev: Self::SchedItem, preempt: bool) {
         let id   = prev.sched_id();
-        let meta = self.metadata.get_mut(&id).unwrap();
+        let Some(meta) = self.metadata.get_mut(&id) else {
+            // prev is not tracked (e.g. idle task) — discard without re-queuing
+            return;
+        };
         let vr   = meta.vruntime.max(self.min_vruntime);
         meta.vruntime = vr;
 
@@ -273,7 +276,10 @@ impl<T: HasSchedulerId> BaseScheduler for MetadataEevdf<T> {
 
     fn task_tick(&mut self, current: &Self::SchedItem) -> bool {
         let id   = current.sched_id();
-        let meta = self.metadata.get_mut(&id).unwrap();
+        let Some(meta) = self.metadata.get_mut(&id) else {
+            // current is not tracked (e.g. idle task) — nothing to do
+            return false;
+        };
         meta.vruntime += vruntime_delta(meta.weight());
         meta.slice    -= 1;
 
