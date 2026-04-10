@@ -30,7 +30,13 @@ pub type WeakAxTaskRef = Weak<AxTask>;
 pub type AxCpuMask = cpumask::CpuMask<{ axconfig::plat::MAX_CPU_NUM }>;
 
 cfg_if::cfg_if! {
-    if #[cfg(feature = "sched-eevdf")] {
+    if #[cfg(feature = "sched-per-cpu")] {
+        // With per-cpu scheduling, the task type is plain TaskInner.
+        // Scheduling metadata (vruntime, deadline, slice, …) lives inside the
+        // scheduler's own tables — not inside the task struct.
+        pub(crate) type AxTask = TaskInner;
+        pub(crate) type Scheduler = axsched::PerCpuScheduler<TaskInner>;
+    } else if #[cfg(feature = "sched-eevdf")] {
         const MAX_TIME_SLICE: usize = 5;
         pub(crate) type AxTask = axsched::EevdfEntity<TaskInner, MAX_TIME_SLICE>;
         pub(crate) type Scheduler = axsched::EevdfScheduler<TaskInner, MAX_TIME_SLICE>;
@@ -80,6 +86,15 @@ pub fn current_may_uninit() -> Option<CurrentTask> {
 /// Panics if the current task is not initialized.
 pub fn current() -> CurrentTask {
     CurrentTask::get()
+}
+
+/// Sets the scheduler algorithm for a specific CPU (only effective with `sched-per-cpu`).
+///
+/// Must be called **before** [`init_scheduler`] / [`init_scheduler_secondary`] for
+/// the target CPU.  Defaults to EEVDF if not set.
+#[cfg(feature = "sched-per-cpu")]
+pub fn set_cpu_scheduler_kind(cpu_id: usize, kind: axsched::SchedulerKind) {
+    crate::run_queue::set_cpu_scheduler_kind(cpu_id, kind);
 }
 
 /// Initializes the task scheduler (for the primary CPU).

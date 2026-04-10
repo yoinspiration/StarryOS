@@ -309,7 +309,10 @@ impl TaskInner {
     }
 
     pub(crate) fn into_arc(self) -> AxTaskRef {
-        Arc::new(AxTask::new(self))
+        #[cfg(feature = "sched-per-cpu")]
+        { Arc::new(self) }
+        #[cfg(not(feature = "sched-per-cpu"))]
+        { Arc::new(AxTask::new(self)) }
     }
 
     /// Returns the current state of the task.
@@ -435,6 +438,13 @@ impl TaskInner {
     #[inline]
     pub(crate) fn set_on_cpu(&self, on_cpu: bool) {
         self.on_cpu.store(on_cpu, Ordering::Release)
+    }
+}
+
+#[cfg(feature = "sched-per-cpu")]
+impl axsched::HasSchedulerId for TaskInner {
+    fn sched_id(&self) -> u64 {
+        self.id().as_u64()
     }
 }
 

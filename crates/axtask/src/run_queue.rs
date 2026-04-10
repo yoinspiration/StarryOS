@@ -65,6 +65,22 @@ static mut RUN_QUEUES: [MaybeUninit<&'static mut AxRunQueue>; axconfig::plat::MA
 #[allow(clippy::declare_interior_mutable_const)] // It's ok because it's used only for initialization `RUN_QUEUES`.
 const ARRAY_REPEAT_VALUE: MaybeUninit<&'static mut AxRunQueue> = MaybeUninit::uninit();
 
+/// Per-CPU scheduler kind configuration for heterogeneous scheduling.
+/// 0 = EEVDF (default), 1 = FIFO, 2 = RR
+#[cfg(feature = "sched-per-cpu")]
+static CPU_SCHEDULER_KINDS: [core::sync::atomic::AtomicU8; axconfig::plat::MAX_CPU_NUM] = {
+    const ZERO: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+    [ZERO; axconfig::plat::MAX_CPU_NUM]
+};
+
+/// Sets the scheduler kind for the given CPU.  Call before [`init`] / [`init_secondary`].
+#[cfg(feature = "sched-per-cpu")]
+pub(crate) fn set_cpu_scheduler_kind(cpu_id: usize, kind: axsched::SchedulerKind) {
+    if cpu_id < axconfig::plat::MAX_CPU_NUM {
+        CPU_SCHEDULER_KINDS[cpu_id].store(kind as u8, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Returns a reference to the current run queue in [`CurrentRunQueueRef`].
 ///
 /// ## Safety
@@ -505,6 +521,18 @@ impl AxRunQueue {
         // gc task should be pinned to the current CPU.
         gc_task.set_cpumask(AxCpuMask::one_shot(cpu_id));
 
+        #[cfg(feature = "sched-per-cpu")]
+        let mut scheduler = {
+            let kind_u8 = CPU_SCHEDULER_KINDS[cpu_id].load(core::sync::atomic::Ordering::Relaxed);
+            let kind = match kind_u8 {
+                1 => axsched::SchedulerKind::Fifo,
+                2 => axsched::SchedulerKind::Rr,
+                _ => axsched::SchedulerKind::Eevdf,
+            };
+            info!("  CPU {cpu_id} uses {} scheduler.", kind.name());
+            Scheduler::new(kind)
+        };
+        #[cfg(not(feature = "sched-per-cpu"))]
         let mut scheduler = Scheduler::new();
         scheduler.add_task(gc_task);
         Self {

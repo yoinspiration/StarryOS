@@ -4,6 +4,7 @@
 mod cfs;
 mod eevdf;
 mod fifo;
+mod per_cpu;
 mod round_robin;
 
 #[cfg(test)]
@@ -14,6 +15,7 @@ extern crate alloc;
 pub use cfs::{CFSTask, CFScheduler};
 pub use eevdf::{EevdfEntity, EevdfScheduler, EevdfStats};
 pub use fifo::{FifoScheduler, FifoTask};
+pub use per_cpu::{HasSchedulerId, PerCpuScheduler, SchedulerKind};
 pub use round_robin::{RRScheduler, RRTask};
 
 /// The base scheduler trait that all schedulers should implement.

@@ -57,6 +57,10 @@ sched-eevdf = [
     "multitask",
     "preempt",
 ]
+sched-per-cpu = [
+    "multitask",
+    "preempt",
+]
 # Boot-time periodic info log for EEVDF counters (demo / advisor walkthrough).
 eevdf-stats-demo = ["sched-eevdf"]
 sched-fifo = ["multitask"]

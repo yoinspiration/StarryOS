@@ -103,12 +103,18 @@ impl<T, const S: usize> EevdfEntity<T, S> {
         self.id.store(id, Ordering::Release);
     }
 
-    fn slice(&self) -> isize {
+    pub(crate) fn slice(&self) -> isize {
         self.slice.load(Ordering::Acquire)
     }
 
-    fn reset_slice(&self) {
+    pub(crate) fn reset_slice(&self) {
         self.slice.store(S as isize, Ordering::Release);
+    }
+
+    /// Decrements the time-slice counter by one and returns the old value.
+    /// Used by simple RR/FIFO adapters in [`crate::per_cpu`].
+    pub(crate) fn fetch_sub_slice(&self) -> isize {
+        self.slice.fetch_sub(1, Ordering::Release)
     }
 
     pub const fn inner(&self) -> &T {

@@ -331,6 +331,137 @@ mod eevdf_tests {
     }
 }
 
+// ── per_cpu tests ────────────────────────────────────────────────────────────
+
+mod per_cpu_tests {
+    use alloc::sync::Arc;
+    use crate::per_cpu::{HasSchedulerId, PerCpuScheduler, SchedulerKind};
+    use crate::BaseScheduler;
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    // A minimal task type for testing – no scheduler-specific fields.
+    struct Task {
+        id:   u64,
+        name: &'static str,
+    }
+
+    impl Task {
+        fn new(id: u64, name: &'static str) -> Arc<Self> {
+            Arc::new(Self { id, name })
+        }
+    }
+
+    impl HasSchedulerId for Task {
+        fn sched_id(&self) -> u64 { self.id }
+    }
+
+    // ── basic scheduling for each variant ────────────────────────────────
+
+    #[test]
+    fn fifo_picks_in_insertion_order() {
+        let mut s = PerCpuScheduler::<Task>::new(SchedulerKind::Fifo);
+        for id in 0..5u64 {
+            s.add_task(Task::new(id, "t"));
+        }
+        for expected in 0..5u64 {
+            let t = s.pick_next_task().unwrap();
+            assert_eq!(t.id, expected);
+            s.put_prev_task(t, false);
+        }
+    }
+
+    #[test]
+    fn fifo_never_preempts_on_tick() {
+        let mut s = PerCpuScheduler::<Task>::new(SchedulerKind::Fifo);
+        s.add_task(Task::new(0, "t"));
+        let t = s.pick_next_task().unwrap();
+        // No matter how many ticks pass, FIFO never requests preemption.
+        for _ in 0..100 {
+            assert!(!s.task_tick(&t), "FIFO should not preempt");
+        }
+        s.put_prev_task(t, false);
+    }
+
+    #[test]
+    fn rr_preempts_after_slice_expires() {
+        let mut s = PerCpuScheduler::<Task>::new(SchedulerKind::Rr);
+        s.add_task(Task::new(0, "t"));
+        let t = s.pick_next_task().unwrap();
+        // DEFAULT_TIME_SLICE = 5; the 5th tick should trigger preemption.
+        let mut preempted = false;
+        for _ in 0..10 {
+            if s.task_tick(&t) { preempted = true; break; }
+        }
+        assert!(preempted, "RR must preempt after slice expires");
+        s.put_prev_task(t, true);
+    }
+
+    #[test]
+    fn eevdf_fairness_equal_weight() {
+        // Three equal-weight tasks; after many ticks each should get ~1/3 of CPU.
+        let mut s = PerCpuScheduler::<Task>::new(SchedulerKind::Eevdf);
+        let tasks: Vec<_> = (0..3u64).map(|i| Task::new(i, "t")).collect();
+        for t in &tasks { s.add_task(t.clone()); }
+
+        let mut counts = [0u64; 3];
+        const TICKS: u64 = 6000;
+
+        for _ in 0..TICKS {
+            let t = s.pick_next_task().unwrap();
+            let id = t.id as usize;
+            let preempt = s.task_tick(&t);
+            counts[id] += 1;
+            s.put_prev_task(t, preempt);
+        }
+
+        let expected = TICKS / 3;
+        for (i, &got) in counts.iter().enumerate() {
+            let err = (got as f64 - expected as f64).abs() / expected as f64;
+            assert!(
+                err < 0.05,
+                "task {i}: expected ~{expected} ticks, got {got} ({:.1}% off)",
+                err * 100.0
+            );
+        }
+    }
+
+    // ── cross-scheduler migration ─────────────────────────────────────────
+
+    /// Demonstrates the key benefit of metadata separation: the same Arc<Task>
+    /// can be moved from an EEVDF scheduler to a FIFO scheduler without any
+    /// type conversion.
+    #[test]
+    fn task_migrates_between_schedulers() {
+        let mut eevdf = PerCpuScheduler::<Task>::new(SchedulerKind::Eevdf);
+        let mut fifo  = PerCpuScheduler::<Task>::new(SchedulerKind::Fifo);
+
+        // Add tasks to EEVDF, run for a while so they accumulate vruntime.
+        let t0 = Task::new(0, "migrating");
+        let t1 = Task::new(1, "staying");
+        eevdf.add_task(t0.clone());
+        eevdf.add_task(t1.clone());
+
+        for _ in 0..20 {
+            let t = eevdf.pick_next_task().unwrap();
+            let preempt = eevdf.task_tick(&t);
+            eevdf.put_prev_task(t, preempt);
+        }
+
+        // Migrate task 0 from EEVDF to FIFO — no type conversion needed.
+        let migrated = eevdf.remove_task(&t0).expect("task should be in eevdf queue");
+        fifo.add_task(migrated);
+
+        // FIFO should now schedule the migrated task normally.
+        let picked = fifo.pick_next_task().expect("fifo should have the migrated task");
+        assert_eq!(picked.id, 0, "migrated task should be scheduled by fifo");
+        fifo.put_prev_task(picked, false);
+
+        // EEVDF continues with the remaining task without issues.
+        let remaining = eevdf.pick_next_task().expect("eevdf should still have task 1");
+        assert_eq!(remaining.id, 1);
+    }
+}
+
 mod eevdf_fairness {
     use crate::*;
     use alloc::sync::Arc;

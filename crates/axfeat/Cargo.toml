@@ -155,6 +155,10 @@ sched-eevdf = [
     "axtask/sched-eevdf",
     "irq",
 ]
+sched-per-cpu = [
+    "axtask/sched-per-cpu",
+    "irq",
+]
 eevdf-stats-demo = ["sched-eevdf", "axtask/eevdf-stats-demo"]
 sched-fifo = ["axtask/sched-fifo"]
 sched-rr = [
