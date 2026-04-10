@@ -15,6 +15,22 @@ extern crate axlog;
 
 pub mod entry;
 
+// Configure per-CPU scheduler kinds before init_scheduler is called.
+// CPU 0: EEVDF (fair scheduling with deadline guarantees)
+// CPU 1: FIFO  (real-time tasks, no preemption)
+// Other CPUs: EEVDF (default)
+#[cfg(feature = "sched-per-cpu")]
+struct SchedSetup;
+
+#[cfg(feature = "sched-per-cpu")]
+#[crate_interface::impl_interface]
+impl axtask::PerCpuSchedSetup for SchedSetup {
+    fn setup_per_cpu_schedulers() {
+        axtask::set_cpu_scheduler_kind(0, axsched::SchedulerKind::Eevdf);
+        axtask::set_cpu_scheduler_kind(1, axsched::SchedulerKind::Fifo);
+    }
+}
+
 mod config;
 mod file;
 mod mm;

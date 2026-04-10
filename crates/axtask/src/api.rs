@@ -97,6 +97,34 @@ pub fn set_cpu_scheduler_kind(cpu_id: usize, kind: axsched::SchedulerKind) {
     crate::run_queue::set_cpu_scheduler_kind(cpu_id, kind);
 }
 
+/// Called by axruntime before `init_scheduler` to let the user configure
+/// per-CPU scheduler kinds.  Override this function to set up heterogeneous
+/// scheduling; the default implementation uses EEVDF for all CPUs.
+///
+/// Only effective with `sched-per-cpu`.
+#[cfg(feature = "sched-per-cpu")]
+#[crate_interface::def_interface]
+pub trait PerCpuSchedSetup {
+    fn setup_per_cpu_schedulers();
+}
+
+#[cfg(feature = "sched-per-cpu")]
+struct DefaultPerCpuSchedSetup;
+
+#[cfg(feature = "sched-per-cpu")]
+#[crate_interface::impl_interface]
+impl PerCpuSchedSetup for DefaultPerCpuSchedSetup {
+    fn setup_per_cpu_schedulers() {
+        // Default: all CPUs use EEVDF, nothing to do.
+    }
+}
+
+/// Invoked by axruntime to configure per-CPU scheduler kinds before init.
+#[cfg(feature = "sched-per-cpu")]
+pub fn setup_per_cpu_schedulers() {
+    crate_interface::call_interface!(PerCpuSchedSetup::setup_per_cpu_schedulers);
+}
+
 /// Initializes the task scheduler (for the primary CPU).
 pub fn init_scheduler() {
     info!("Initialize scheduling...");
