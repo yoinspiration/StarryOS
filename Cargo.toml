@@ -87,7 +87,7 @@ optional = true
 axsched = { path = "crates/axsched" }
 axtask = { path = "crates/axtask" }
 axfeat = { path = "crates/axfeat" }
-axruntime = { path = "../axruntime-patched" }
+axruntime = { path = "axruntime-patched" }
 
 [package.metadata.vendor-filter]
 platforms = ["riscv64gc-unknown-none-elf", "loongarch64-unknown-none-softfloat"]
