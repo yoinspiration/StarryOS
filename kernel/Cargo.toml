@@ -35,8 +35,6 @@ axfeat = { workspace = true, features = [
 ] }
 
 axalloc.workspace = true
-crate_interface = "0.1"
-axsched = { version = "0.3.0-preview.2" }
 axconfig.workspace = true
 axdisplay.workspace = true
 axdriver.workspace = true

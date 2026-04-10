@@ -233,12 +233,28 @@ PerCpuScheduler<T>
 └── Rr(MetadataRr<T>)         ← VecDeque + 每任务剩余时间片表
 ```
 
-启动时，可以在 `init_scheduler` 之前为每个 CPU 指定算法：
+### 使用方式
 
-```rust
-axtask::set_cpu_scheduler_kind(0, SchedulerKind::Eevdf);
-axtask::set_cpu_scheduler_kind(1, SchedulerKind::Fifo);
+通过编译时环境变量 `CPU_SCHED` 指定每个 CPU 的调度算法，无需改代码：
+
+```bash
+CPU_SCHED="0:eevdf,1:fifo" make run SMP=2
 ```
+
+格式：`<cpu_id>:<算法>` 用逗号分隔，支持 `eevdf`、`fifo`、`rr`，未指定的 CPU 默认使用 EEVDF。
+
+`CPU_SCHED` 由 build script 在编译时读取，写入生成文件，baked 进二进制。`CPU_SCHED` 变化时 Cargo 自动触发重新编译，无需手动 clean。
+
+调用链：
+
+```
+axruntime::rust_main()
+  → axtask::setup_per_cpu_schedulers(CPU_SCHED_CONFIG)  ← 编译时 baked 的配置字符串
+  → axtask::init_scheduler()                            ← CPU 0 按配置初始化
+  → (CPU 1 启动) init_scheduler_secondary()             ← CPU 1 同样读取配置
+```
+
+配置存储在一个全局原子数组里（每 CPU 一格），`setup_per_cpu_schedulers` 解析字符串后写入，`init_scheduler` / `init_scheduler_secondary` 读取，之后不再变更。
 
 ### 验证
 
@@ -249,3 +265,21 @@ axtask::set_cpu_scheduler_kind(1, SchedulerKind::Fifo);
 | `rr_preempts_after_slice_expires` | RR 在时间片耗尽后触发抢占 |
 | `eevdf_fairness_equal_weight` | 等权重 3 任务，CPU 占比误差 ±5% |
 | `task_migrates_between_schedulers` | 同一 Arc<Task> 从 EEVDF 迁移到 FIFO，无需类型转换 |
+
+**QEMU 实测（SMP=2）**
+
+```bash
+CPU_SCHED="0:eevdf,1:fifo" make run SMP=2 LOG=info
+```
+
+启动日志：
+
+```
+CPU 0 uses EEVDF scheduler.
+use per-cpu (EEVDF / FIFO / RR) scheduler.
+...
+Secondary CPU 1 started.
+CPU 1 uses FIFO scheduler.
+```
+
+系统正常启动进入 shell，无 panic。CPU 0 使用 EEVDF，CPU 1 使用 FIFO，两个 CPU 各自按配置独立运行。

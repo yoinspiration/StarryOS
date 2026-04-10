@@ -157,6 +157,7 @@ sched-eevdf = [
 ]
 sched-per-cpu = [
     "axtask/sched-per-cpu",
+    "axruntime/sched-per-cpu",
     "irq",
 ]
 eevdf-stats-demo = ["sched-eevdf", "axtask/eevdf-stats-demo"]
