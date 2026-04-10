@@ -55,6 +55,7 @@ irq = [
     "dep:percpu",
 ]
 multitask = ["axtask/multitask"]
+sched-per-cpu = ["multitask"]
 net = [
     "axdriver",
     "dep:axnet",
