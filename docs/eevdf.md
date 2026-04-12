@@ -283,3 +283,26 @@ CPU 1 uses FIFO scheduler.
 ```
 
 系统正常启动进入 shell，无 panic。CPU 0 使用 EEVDF，CPU 1 使用 FIFO，两个 CPU 各自按配置独立运行。
+
+## 范围与非目标
+
+### 与 Linux「调度类」语义的差异
+
+当前 Starry 里「多种调度算法并存」主要指：在启用 **`sched-per-cpu`** 时，**不同 CPU** 可选用不同的 `SchedulerKind`（EEVDF / FIFO / RR），例如通过上文中的 `CPU_SCHED` 在编译期指定。
+
+这与 Linux 里常见的 **每个线程 / 进程** 选用 `SCHED_FIFO`、`SCHED_RR`、`SCHED_OTHER` 等 **policy** 不是同一层语义：后者是 **per-task** 的调度策略选择，涉及优先级继承、带宽、与 POSIX 行为的交互等，复杂度和本文描述的 per-CPU 异构算法 **不在一个阶段**。
+
+上文「元数据分离、同一 `Arc<Task>` 跨调度器迁移」面向的是：**统一任务类型** 与 **按 CPU 切换算法** 的工程需求；**按任务粒度选择不同调度策略**（真正的多「调度类」在同一调度框架下共存）属于后续演进方向，尚未作为本文档承诺的行为。
+
+### Cargo feature 与两条实现路径
+
+构建时通过 Cargo feature 组合选择调度实现，常见情形如下：
+
+- **启用 `sched-per-cpu`**：`AxTask` 为纯 `TaskInner`，调度元数据存放在 `PerCpuScheduler` 内部表结构中；本文「元数据分离」「`HasSchedulerId`」等描述主要针对这一路。
+- **仅启用 `sched-eevdf`（未启用 `sched-per-cpu`）**：任务类型为 `EevdfEntity<TaskInner>`，vruntime / deadline 等字段包在实体内部，由 `EevdfScheduler` 驱动。
+
+两条路径对应不同的类型与调度器实现，**不会在同一构建中混用**；与 EEVDF 相关的算法细节在两条路径中各有实现，维护时需注意行为一致性问题。
+
+### 与主线内核演进的关系
+
+Linux 主线中，EEVDF 进入默认公平调度路径、sched_ext 等机制带来可扩展调度能力，这是 Starry 长期参照的 **方向**。Starry 侧以统一的 `BaseScheduler` trait（见 `crates/axsched/src/lib.rs`）、按阶段增加策略与可观测性为手段，**对齐思路与可测试子目标**，而非逐行复刻内核或用户态 BPF 调度框架。
