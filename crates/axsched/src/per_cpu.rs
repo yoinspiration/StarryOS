@@ -36,6 +36,7 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 
 use crate::BaseScheduler;
+use crate::eevdf::EevdfStats;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Public trait
@@ -134,6 +135,8 @@ struct MetadataEevdf<T: HasSchedulerId> {
     total_weighted_vrt: i128,
     total_weight: i128,
     min_vruntime: isize,
+    stats_enabled: bool,
+    stats: EevdfStats,
 }
 
 impl<T: HasSchedulerId> MetadataEevdf<T> {
@@ -145,6 +148,15 @@ impl<T: HasSchedulerId> MetadataEevdf<T> {
             total_weighted_vrt: 0,
             total_weight: 0,
             min_vruntime: 0,
+            stats_enabled: false,
+            stats: EevdfStats::default(),
+        }
+    }
+
+    #[inline]
+    fn stat_inc(counter: &mut u64, enabled: bool) {
+        if enabled {
+            *counter = counter.saturating_add(1);
         }
     }
 
@@ -225,6 +237,7 @@ impl<T: HasSchedulerId> BaseScheduler for MetadataEevdf<T> {
             return None;
         }
         let v = self.avg_vruntime();
+        let mut used_fallback = false;
 
         // Fast path: min-deadline task is eligible.
         let &(first_dl, first_id) = self.ready_queue.keys().next().unwrap();
@@ -239,9 +252,17 @@ impl<T: HasSchedulerId> BaseScheduler for MetadataEevdf<T> {
                 .min();
             match eligible {
                 Some(k) => k,
-                None    => (first_dl, first_id), // fallback
+                None    => {
+                    // fallback
+                    used_fallback = true;
+                    (first_dl, first_id)
+                }
             }
         };
+        Self::stat_inc(&mut self.stats.picks_total, self.stats_enabled);
+        if used_fallback {
+            Self::stat_inc(&mut self.stats.fallback_no_eligible, self.stats_enabled);
+        }
         self.dequeue(key.0, key.1)
         // Note: metadata entry for this task is intentionally kept alive so
         // that task_tick / put_prev_task can access it while the task runs.
@@ -267,7 +288,6 @@ impl<T: HasSchedulerId> BaseScheduler for MetadataEevdf<T> {
             meta.slice    = DEFAULT_TIME_SLICE;
             meta.deadline = vr + deadline_delta(DEFAULT_TIME_SLICE, meta.weight());
         }
-        let dl = meta.deadline;
         let snapshot = meta.clone();
         self.enqueue(id, prev, &snapshot);
         // Update the stored metadata to reflect new deadline/vruntime.
@@ -284,6 +304,7 @@ impl<T: HasSchedulerId> BaseScheduler for MetadataEevdf<T> {
         meta.slice    -= 1;
 
         if meta.slice <= 0 {
+            Self::stat_inc(&mut self.stats.slice_expired, self.stats_enabled);
             return true; // slice expired
         }
 
@@ -294,6 +315,7 @@ impl<T: HasSchedulerId> BaseScheduler for MetadataEevdf<T> {
         if let Some((&(head_dl, head_id), _)) = self.ready_queue.iter().next() {
             let head_vr = self.metadata[&head_id].vruntime;
             if head_vr <= v && head_dl < snapshot.deadline {
+                Self::stat_inc(&mut self.stats.preempt_by_deadline, self.stats_enabled);
                 return true;
             }
         }
@@ -465,10 +487,25 @@ impl<T: HasSchedulerId> PerCpuScheduler<T> {
         }
     }
 
-    // EEVDF stats passthrough (no-op for FIFO/RR).
-    pub fn set_stats_enabled(&mut self, _enabled: bool) {}
-    pub fn stats(&self) -> crate::eevdf::EevdfStats { crate::eevdf::EevdfStats::default() }
-    pub fn reset_stats(&mut self) {}
+    // EEVDF stats passthrough (no-op/default for FIFO/RR).
+    pub fn set_stats_enabled(&mut self, enabled: bool) {
+        if let Self::Eevdf(s) = self {
+            s.stats_enabled = enabled;
+        }
+    }
+
+    pub fn stats(&self) -> EevdfStats {
+        match self {
+            Self::Eevdf(s) => s.stats,
+            Self::Fifo(_) | Self::Rr(_) => EevdfStats::default(),
+        }
+    }
+
+    pub fn reset_stats(&mut self) {
+        if let Self::Eevdf(s) = self {
+            s.stats = EevdfStats::default();
+        }
+    }
 }
 
 impl<T: HasSchedulerId> BaseScheduler for PerCpuScheduler<T> {
