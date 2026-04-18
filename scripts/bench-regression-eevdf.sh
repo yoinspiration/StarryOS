@@ -13,7 +13,7 @@
 set -eu
 
 LOAD="${LOAD:-4}"
-RESULT_DIR="${RESULT_DIR:-/root/bench-results}"
+RESULT_DIR="${RESULT_DIR:-/tmp/bench-results}"
 PROBE_NAME="${PROBE_NAME:-ls}"
 PROBE_CMD="${PROBE_CMD:-ls >/dev/null}"
 SAMPLES="${SAMPLES:-50,200}"
@@ -30,7 +30,9 @@ if [ -z "${SAMPLE_LIST}" ]; then
     exit 1
 fi
 
-mkdir -p "${RESULT_DIR}"
+# StarryOS/busybox: redundant `mkdir -p` can still walk "/" and fail with EINVAL;
+# skip when RESULT_DIR already exists as a directory.
+[ -d "${RESULT_DIR}" ] || mkdir -p "${RESULT_DIR}"
 
 run_case() {
     label="$1"   # base | nice19
